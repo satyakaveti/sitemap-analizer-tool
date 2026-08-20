@@ -122,6 +122,45 @@ function updateProgress(data) {
     document.getElementById('stat-server-errors').textContent = data.server_errors.toLocaleString();
     document.getElementById('stat-elapsed').textContent = formatTime(data.elapsed);
     document.getElementById('stat-eta').textContent = data.eta ? formatTime(data.eta) + ' (est.)' : 'calculating...';
+
+    const curUrl = document.getElementById('current-url');
+    curUrl.textContent = data.current_url || '-';
+    curUrl.title = data.current_url || '';
+
+    updateLiveTable(data.recent_results || []);
+}
+
+function updateLiveTable(results) {
+    const tbody = document.getElementById('live-table-body');
+    if (!results.length) return;
+
+    tbody.innerHTML = results.map(r => {
+        const statusClass = getStatusClass(r.status);
+        return `<tr>
+            <td class="url-cell" title="${esc(r.url)}">${esc(r.url)}</td>
+            <td class="status-cell ${statusClass}">${esc(String(r.status))}</td>
+            <td>${esc(r.time)}</td>
+            <td>${esc(r.size)}</td>
+            <td class="title-cell" title="${esc(r.title)}">${esc(r.title)}</td>
+            <td>${esc(String(r.words))}</td>
+            <td class="${r.issues > 0 ? 'has-issues' : ''}">${r.issues}</td>
+        </tr>`;
+    }).join('');
+}
+
+function getStatusClass(status) {
+    const s = String(status);
+    if (s.startsWith('2')) return 'st-green';
+    if (s.startsWith('3')) return 'st-yellow';
+    if (s.startsWith('4')) return 'st-red';
+    if (s.startsWith('5')) return 'st-red';
+    return 'st-gray';
+}
+
+function esc(str) {
+    const d = document.createElement('div');
+    d.textContent = str;
+    return d.innerHTML;
 }
 
 function showResults(data) {

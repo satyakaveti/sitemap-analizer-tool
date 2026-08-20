@@ -288,6 +288,111 @@ select:focus {
     color: #666;
 }
 
+.current-url-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1rem;
+    background: #eef2ff;
+    border-radius: 8px;
+    margin-bottom: 1.5rem;
+    border-left: 4px solid #4472C4;
+}
+
+.current-url-label {
+    font-weight: 600;
+    font-size: 0.85rem;
+    color: #4472C4;
+    white-space: nowrap;
+}
+
+.current-url {
+    font-family: 'SF Mono', SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+    font-size: 0.85rem;
+    color: #333;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+}
+
+.live-table-wrap {
+    margin-bottom: 1.5rem;
+}
+
+.live-table-wrap h3 {
+    font-size: 0.95rem;
+    color: #666;
+    margin-bottom: 0.75rem;
+    font-weight: 600;
+}
+
+.live-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.82rem;
+}
+
+.live-table th {
+    background: #f1f3f5;
+    padding: 0.5rem 0.6rem;
+    text-align: left;
+    font-weight: 600;
+    color: #555;
+    border-bottom: 2px solid #dee2e6;
+    white-space: nowrap;
+}
+
+.live-table td {
+    padding: 0.45rem 0.6rem;
+    border-bottom: 1px solid #f0f0f0;
+    vertical-align: middle;
+}
+
+.live-table tbody tr:hover {
+    background: #f8f9fa;
+}
+
+.table-empty {
+    text-align: center;
+    color: #aaa;
+    padding: 1.5rem !important;
+    font-style: italic;
+}
+
+.url-cell {
+    max-width: 250px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: monospace;
+    font-size: 0.8rem;
+}
+
+.title-cell {
+    max-width: 150px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.status-cell {
+    font-weight: 700;
+    text-align: center;
+    border-radius: 4px;
+    padding: 0.2rem 0.4rem;
+}
+
+.st-green { color: #27ae60; background: #d4edda; }
+.st-yellow { color: #856404; background: #fff3cd; }
+.st-red { color: #c0392b; background: #f8d7da; }
+.st-gray { color: #666; background: #e9ecef; }
+
+.has-issues {
+    color: #e67e22;
+    font-weight: 700;
+}
+
 @media (max-width: 600px) {
     .container {
         padding: 1rem;

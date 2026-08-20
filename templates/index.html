@@ -87,6 +87,31 @@
                     <span>Est. Remaining: <strong id="stat-eta">calculating...</strong></span>
                 </div>
 
+                <div class="current-url-bar">
+                    <span class="current-url-label">Now scanning:</span>
+                    <span class="current-url" id="current-url">-</span>
+                </div>
+
+                <div class="live-table-wrap">
+                    <h3>Recent Results</h3>
+                    <table class="live-table" id="live-table">
+                        <thead>
+                            <tr>
+                                <th>URL</th>
+                                <th>Status</th>
+                                <th>Time</th>
+                                <th>Size</th>
+                                <th>Title</th>
+                                <th>Words</th>
+                                <th>Issues</th>
+                            </tr>
+                        </thead>
+                        <tbody id="live-table-body">
+                            <tr><td colspan="7" class="table-empty">Waiting for first results...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
                 <button id="cancel-btn" class="btn btn-danger">Cancel Scan</button>
             </section>
 

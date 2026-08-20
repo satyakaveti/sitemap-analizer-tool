@@ -63,6 +63,8 @@ async def scan_status(scan_id: str):
         "eta": round(eta, 1) if eta else None,
         "error": s.error,
         "report_path": s.report_path,
+        "current_url": s.current_url,
+        "recent_results": s.recent_results,
     }
 
 

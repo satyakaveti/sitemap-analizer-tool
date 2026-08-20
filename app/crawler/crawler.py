@@ -53,6 +53,7 @@ class AsyncCrawler:
             if self.state.is_cancelled:
                 return
 
+            self.state.current_url = url
             result = await checker.check_url(url, fetch_body=True)
 
             if result.raw_html and result.status_code and 200 <= result.status_code < 400:
@@ -78,3 +79,18 @@ class AsyncCrawler:
             result.raw_html = None
             self.state.results.append(result)
             self.state.completed += 1
+
+            self.state.recent_results.append({
+                "url": result.url[:120],
+                "status": result.status_code or result.error or "N/A",
+                "time": f"{result.response_time:.2f}s",
+                "size": f"{result.content_length // 1024}KB" if result.content_length else "-",
+                "title": (result.title[:50] + "...") if len(result.title) > 50 else (result.title or "-"),
+                "words": result.word_count or "-",
+                "issues": len(result.issues),
+            })
+            if len(self.state.recent_results) > 5:
+                self.state.recent_results.pop(0)
+
+            if self.state.completed % 50 == 0:
+                logger.info(f"scan={self.state.scan_id} completed={self.state.completed}/{self.state.total_urls}")

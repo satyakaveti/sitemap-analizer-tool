@@ -64,6 +64,8 @@ class ScanState:
     is_cancelled: bool = False
     report_path: str = ""
     robots_info: dict = field(default_factory=dict)
+    current_url: str = ""
+    recent_results: list[dict] = field(default_factory=list)
 
     @property
     def elapsed_seconds(self) -> float:
