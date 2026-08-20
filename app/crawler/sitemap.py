@@ -133,11 +133,17 @@ async def extract_all_urls(
 
             result = await fetch_sitemap(url, client)
             if result is None:
+                normalized = normalize_url(url)
+                if normalized and is_valid_url(normalized):
+                    all_urls.add(normalized)
                 return
 
             raw, content_type = result
             root = parse_xml(raw)
             if root is None:
+                normalized = normalize_url(url)
+                if normalized and is_valid_url(normalized):
+                    all_urls.add(normalized)
                 return
 
             if is_sitemap_index(root):
