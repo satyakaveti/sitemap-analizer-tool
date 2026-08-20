@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>URL Analytics - Sitemap Health Checker</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="/static/css/pages.css">
+</head>
+<body>
+    <div class="container-wide">
+        <header>
+            <div class="breadcrumb">
+                <a href="/">Home</a> / <span>URL Analytics</span>
+            </div>
+            <h1>URL Analytics</h1>
+            <p class="scan-id">Scan: <strong id="scan-id"></strong> &mdash; <span id="scan-status"></span></p>
+        </header>
+
+        <div class="toolbar">
+            <input type="text" id="search-input" placeholder="Search URLs..." class="search-box">
+            <select id="status-filter">
+                <option value="">All Status</option>
+                <option value="2xx">2xx Success</option>
+                <option value="3xx">3xx Redirect</option>
+                <option value="4xx">4xx Client Error</option>
+                <option value="5xx">5xx Server Error</option>
+                <option value="error">Errors</option>
+            </select>
+            <select id="issue-filter">
+                <option value="">All Issues</option>
+                <option value="Missing title">Missing Title</option>
+                <option value="Missing meta description">Missing Meta Desc</option>
+                <option value="Missing H1">Missing H1</option>
+                <option value="Thin content">Thin Content</option>
+                <option value="soft 404">Soft 404</option>
+                <option value="noindex">Noindex</option>
+            </select>
+            <span class="result-count" id="result-count"></span>
+        </div>
+
+        <table class="data-table" id="urls-table">
+            <thead>
+                <tr>
+                    <th class="col-id">#</th>
+                    <th class="col-url">URL</th>
+                    <th class="col-status">Status</th>
+                    <th class="col-time">Time</th>
+                    <th class="col-size">Size</th>
+                    <th class="col-title">Title</th>
+                    <th class="col-words">Words</th>
+                    <th class="col-issues">Issues</th>
+                    <th class="col-action"></th>
+                </tr>
+            </thead>
+            <tbody id="urls-body">
+                <tr><td colspan="9" class="table-loading">Loading...</td></tr>
+            </tbody>
+        </table>
+
+        <div class="pagination" id="pagination"></div>
+
+        <div class="page-actions">
+            <a id="download-btn" class="btn btn-primary" href="#">Download Partial Report</a>
+            <a id="issues-link" class="btn btn-secondary" href="#">View All Issues</a>
+        </div>
+    </div>
+
+    <script>
+        const scanId = '{{ scan_id }}';
+        let currentPage = 1;
+        const perPage = 50;
+        let debounceTimer = null;
+
+        document.getElementById('scan-id').textContent = scanId;
+        document.getElementById('download-btn').href = `/api/scan/${scanId}/download-partial`;
+        document.getElementById('issues-link').href = `/scan/${scanId}/issues`;
+
+        document.getElementById('search-input').addEventListener('input', () => {
+            clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(() => { currentPage = 1; loadUrls(); }, 300);
+        });
+        document.getElementById('status-filter').addEventListener('change', () => { currentPage = 1; loadUrls(); });
+        document.getElementById('issue-filter').addEventListener('change', () => { currentPage = 1; loadUrls(); });
+
+        async function loadUrls() {
+            const search = document.getElementById('search-input').value;
+            const status = document.getElementById('status-filter').value;
+            const issue = document.getElementById('issue-filter').value;
+
+            const params = new URLSearchParams({ page: currentPage, per_page: perPage, search, status, issue });
+            try {
+                const resp = await fetch(`/api/scan/${scanId}/urls?${params}`);
+                const data = await resp.json();
+                renderTable(data.results, data.total);
+                renderPagination(data.page, data.total_pages, data.total);
+            } catch (e) {
+                document.getElementById('urls-body').innerHTML = '<tr><td colspan="9" class="table-error">Failed to load</td></tr>';
+            }
+        }
+
+        function renderTable(results, total) {
+            document.getElementById('result-count').textContent = `${total.toLocaleString()} URLs`;
+            const tbody = document.getElementById('urls-body');
+            if (!results.length) {
+                tbody.innerHTML = '<tr><td colspan="9" class="table-empty">No results found</td></tr>';
+                return;
+            }
+            tbody.innerHTML = results.map((r, i) => {
+                const sc = r.status_code;
+                const scClass = sc >= 500 ? 'st-red' : sc >= 400 ? 'st-red' : sc >= 300 ? 'st-yellow' : sc >= 200 ? 'st-green' : 'st-gray';
+                const issueCount = (r.issues || []).length;
+                const offset = (currentPage - 1) * perPage;
+                return `<tr>
+                    <td class="cell-id">${offset + i + 1}</td>
+                    <td class="cell-url" title="${esc(r.url)}">${esc(r.url)}</td>
+                    <td class="cell-status ${scClass}">${sc || r.error || 'N/A'}</td>
+                    <td>${r.response_time ? r.response_time.toFixed(2) + 's' : '-'}</td>
+                    <td>${r.content_length ? (r.content_length / 1024).toFixed(0) + 'KB' : '-'}</td>
+                    <td class="cell-title" title="${esc(r.title || '')}">${esc(r.title || '-')}</td>
+                    <td>${r.word_count || '-'}</td>
+                    <td class="${issueCount > 0 ? 'has-issues' : ''}">${issueCount}</td>
+                    <td><a href="/scan/${scanId}/url/${r.id}" target="_blank" class="btn-detail">Details</a></td>
+                </tr>`;
+            }).join('');
+        }
+
+        function renderPagination(page, totalPages, total) {
+            const div = document.getElementById('pagination');
+            if (totalPages <= 1) { div.innerHTML = ''; return; }
+            let html = '';
+            if (page > 1) html += `<button onclick="goPage(${page - 1})">Prev</button>`;
+            const start = Math.max(1, page - 3);
+            const end = Math.min(totalPages, page + 3);
+            if (start > 1) html += `<button onclick="goPage(1)">1</button><span class="dots">...</span>`;
+            for (let i = start; i <= end; i++) {
+                html += `<button class="${i === page ? 'active' : ''}" onclick="goPage(${i})">${i}</button>`;
+            }
+            if (end < totalPages) html += `<span class="dots">...</span><button onclick="goPage(${totalPages})">${totalPages}</button>`;
+            if (page < totalPages) html += `<button onclick="goPage(${page + 1})">Next</button>`;
+            div.innerHTML = html;
+        }
+
+        function goPage(p) { currentPage = p; loadUrls(); window.scrollTo(0, 0); }
+        function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+
+        loadUrls();
+    </script>
+</body>
+</html>

@@ -41,6 +41,7 @@ form.addEventListener('submit', async (e) => {
         }
 
         currentScanId = data.scan_id;
+        document.getElementById('partial-download-btn').href = `/api/scan/${currentScanId}/download-partial`;
         showSection('progress');
         startPolling();
     } catch (err) {
@@ -180,6 +181,9 @@ function showResults(data) {
 
     const dlBtn = document.getElementById('download-btn');
     dlBtn.href = `/api/scan/${currentScanId}/download`;
+
+    document.getElementById('urls-link').href = `/scan/${currentScanId}/urls`;
+    document.getElementById('issues-link').href = `/scan/${currentScanId}/issues`;
 
     loadSummaryCards(currentScanId);
     showSection('results');

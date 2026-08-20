@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Common Issues - Sitemap Health Checker</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="/static/css/pages.css">
+</head>
+<body>
+    <div class="container-wide">
+        <header>
+            <div class="breadcrumb">
+                <a href="/">Home</a> / <span>Common Issues</span>
+            </div>
+            <h1>Common Issues</h1>
+            <p class="scan-id">Scan: <strong id="scan-id"></strong></p>
+        </header>
+
+        <div class="issues-tabs">
+            <button class="tab active" data-tab="all">All Issues</button>
+            <button class="tab" data-tab="seo">SEO</button>
+            <button class="tab" data-tab="content">Content</button>
+            <button class="tab" data-tab="errors">Errors</button>
+        </div>
+
+        <div id="issues-content" class="issues-loading">Loading...</div>
+
+        <div class="page-actions">
+            <a id="urls-link" class="btn btn-secondary" href="#">View All URLs</a>
+            <a id="download-btn" class="btn btn-primary" href="#">Download Report</a>
+        </div>
+    </div>
+
+    <script>
+        const scanId = '{{ scan_id }}';
+        let allIssues = [];
+
+        document.getElementById('scan-id').textContent = scanId;
+        document.getElementById('urls-link').href = `/scan/${scanId}/urls`;
+        document.getElementById('download-btn').href = `/api/scan/${scanId}/download-partial`;
+
+        document.querySelectorAll('.tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                tab.classList.add('active');
+                renderIssues(tab.dataset.tab);
+            });
+        });
+
+        async function loadIssues() {
+            try {
+                const resp = await fetch(`/api/scan/${scanId}/issues`);
+                allIssues = await resp.json();
+                renderIssues('all');
+            } catch (e) {
+                document.getElementById('issues-content').innerHTML = '<div class="issues-error">Failed to load issues.</div>';
+            }
+        }
+
+        function getIssueType(issue) {
+            const lower = issue.toLowerCase();
+            if (lower.includes('title') || lower.includes('meta') || lower.includes('h1') ||
+                lower.includes('canonical') || lower.includes('noindex') || lower.includes('nofollow'))
+                return 'seo';
+            if (lower.includes('thin') || lower.includes('soft') || lower.includes('word') ||
+                lower.includes('application error'))
+                return 'content';
+            if (lower.includes('http') || lower.includes('timeout') || lower.includes('dns') ||
+                lower.includes('ssl') || lower.includes('error') || lower.includes('connection'))
+                return 'errors';
+            return 'other';
+        }
+
+        function renderIssues(filter) {
+            const filtered = filter === 'all' ? allIssues : allIssues.filter(i => getIssueType(i.issue) === filter);
+
+            if (!filtered.length) {
+                document.getElementById('issues-content').innerHTML = '<div class="no-issues">No issues found in this category.</div>';
+                return;
+            }
+
+            let html = `<div class="issues-table-wrap"><table class="data-table issues-table">
+                <thead><tr>
+                    <th class="col-rank">#</th>
+                    <th class="col-issue">Issue</th>
+                    <th class="col-type">Type</th>
+                    <th class="col-count">Affected Pages</th>
+                    <th class="col-sample">Sample URLs</th>
+                </tr></thead><tbody>`;
+
+            filtered.forEach((item, i) => {
+                const typeClass = getIssueType(item.issue) === 'errors' ? 'type-error' :
+                                  getIssueType(item.issue) === 'seo' ? 'type-seo' : 'type-content';
+                const typeLabel = getIssueType(item.issue).toUpperCase();
+                const sampleHtml = (item.sample_urls || []).map(u =>
+                    `<a href="/scan/${scanId}/urls?search=${encodeURIComponent(u)}" target="_blank" class="sample-link">${esc(u)}</a>`
+                ).join('');
+
+                html += `<tr>
+                    <td class="cell-id">${i + 1}</td>
+                    <td class="cell-issue"><strong>${esc(item.issue)}</strong></td>
+                    <td><span class="type-badge ${typeClass}">${typeLabel}</span></td>
+                    <td class="cell-count">${item.count}</td>
+                    <td class="cell-sample">${sampleHtml}</td>
+                </tr>`;
+            });
+
+            html += '</tbody></table></div>';
+            document.getElementById('issues-content').innerHTML = html;
+        }
+
+        function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+
+        loadIssues();
+    </script>
+</body>
+</html>

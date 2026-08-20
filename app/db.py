@@ -299,3 +299,104 @@ def count_by_status(scan_id: str) -> dict:
         GROUP BY category
     """, (scan_id,)).fetchall()
     return {row["category"]: row["count"] for row in rows}
+
+
+def get_all_issues_grouped(scan_id: str) -> list[dict]:
+    conn = _get_conn()
+    rows = conn.execute("SELECT issues, url FROM url_results WHERE scan_id = ?", (scan_id,)).fetchall()
+
+    issue_map: dict[str, dict] = {}
+    for row in rows:
+        issues = json.loads(row["issues"]) if row["issues"] else []
+        url = row["url"]
+        for issue in issues:
+            issue = issue.strip()
+            if not issue:
+                continue
+            if issue not in issue_map:
+                issue_map[issue] = {"issue": issue, "count": 0, "sample_urls": []}
+            issue_map[issue]["count"] += 1
+            if len(issue_map[issue]["sample_urls"]) < 5:
+                issue_map[issue]["sample_urls"].append(url)
+
+    result = sorted(issue_map.values(), key=lambda x: x["count"], reverse=True)
+    return result
+
+
+def get_url_detail(scan_id: str, url: str) -> Optional[dict]:
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT * FROM url_results WHERE scan_id = ? AND url = ?",
+        (scan_id, url),
+    ).fetchone()
+    if not row:
+        return None
+    d = dict(row)
+    d["issues"] = json.loads(d["issues"]) if d["issues"] else []
+    d["redirect_chain"] = json.loads(d["redirect_chain"]) if d["redirect_chain"] else []
+    d["indexable"] = bool(d["indexable"])
+    return d
+
+
+def get_url_detail_by_id(scan_id: str, result_id: int) -> Optional[dict]:
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT * FROM url_results WHERE scan_id = ? AND id = ?",
+        (scan_id, result_id),
+    ).fetchone()
+    if not row:
+        return None
+    d = dict(row)
+    d["issues"] = json.loads(d["issues"]) if d["issues"] else []
+    d["redirect_chain"] = json.loads(d["redirect_chain"]) if d["redirect_chain"] else []
+    d["indexable"] = bool(d["indexable"])
+    return d
+
+
+def get_paginated_results(scan_id: str, offset: int = 0, limit: int = 50,
+                          search: str = "", status_filter: str = "",
+                          issue_filter: str = "") -> tuple[list[dict], int]:
+    conn = _get_conn()
+
+    where = ["scan_id = ?"]
+    params: list = [scan_id]
+
+    if search:
+        where.append("url LIKE ?")
+        params.append(f"%{search}%")
+
+    if status_filter == "error":
+        where.append("status_code IS NULL AND error != ''")
+    elif status_filter == "4xx":
+        where.append("status_code BETWEEN 400 AND 499")
+    elif status_filter == "5xx":
+        where.append("status_code BETWEEN 500 AND 599")
+    elif status_filter == "2xx":
+        where.append("status_code BETWEEN 200 AND 299")
+    elif status_filter == "3xx":
+        where.append("status_code BETWEEN 300 AND 399")
+
+    if issue_filter:
+        where.append("issues LIKE ?")
+        params.append(f"%{issue_filter}%")
+
+    where_str = " AND ".join(where)
+
+    total = conn.execute(
+        f"SELECT COUNT(*) as c FROM url_results WHERE {where_str}", params
+    ).fetchone()["c"]
+
+    rows = conn.execute(
+        f"SELECT * FROM url_results WHERE {where_str} ORDER BY id LIMIT ? OFFSET ?",
+        params + [limit, offset],
+    ).fetchall()
+
+    results = []
+    for row in rows:
+        d = dict(row)
+        d["issues"] = json.loads(d["issues"]) if d["issues"] else []
+        d["redirect_chain"] = json.loads(d["redirect_chain"]) if d["redirect_chain"] else []
+        d["indexable"] = bool(d["indexable"])
+        results.append(d)
+
+    return results, total

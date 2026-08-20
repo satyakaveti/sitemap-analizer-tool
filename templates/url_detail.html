@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>URL Detail - Sitemap Health Checker</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="/static/css/pages.css">
+</head>
+<body>
+    <div class="container-wide">
+        <header>
+            <div class="breadcrumb">
+                <a href="/">Home</a> / <a href="/scan/{{ scan_id }}/urls">URLs</a> / <span>Detail</span>
+            </div>
+            <h1>URL Analysis Detail</h1>
+        </header>
+
+        <div id="detail-content" class="detail-loading">Loading...</div>
+    </div>
+
+    <script>
+        const scanId = '{{ scan_id }}';
+        const resultId = {{ result_id }};
+
+        async function loadDetail() {
+            try {
+                const resp = await fetch(`/api/scan/${scanId}/url/${resultId}`);
+                if (!resp.ok) throw new Error('Not found');
+                const r = await resp.json();
+                renderDetail(r);
+            } catch (e) {
+                document.getElementById('detail-content').innerHTML = '<div class="detail-error">URL not found or scan still running.</div>';
+            }
+        }
+
+        function renderDetail(r) {
+            const issues = r.issues || [];
+            const chain = r.redirect_chain || [];
+            const sc = r.status_code;
+            const scClass = sc >= 500 ? 'st-red' : sc >= 400 ? 'st-red' : sc >= 300 ? 'st-yellow' : sc >= 200 ? 'st-green' : 'st-gray';
+
+            let html = `
+            <div class="detail-url-bar">
+                <span class="detail-url">${esc(r.url)}</span>
+                <span class="detail-status ${scClass}">${sc || r.error || 'N/A'}</span>
+            </div>
+
+            <div class="detail-grid">
+                <div class="detail-card">
+                    <h3>HTTP Response</h3>
+                    <table class="detail-table">
+                        <tr><td>Status Code</td><td class="${scClass}"><strong>${sc || 'N/A'}</strong></td></tr>
+                        <tr><td>Final URL</td><td class="mono">${esc(r.final_url || '-')}</td></tr>
+                        <tr><td>Response Time</td><td>${r.response_time ? r.response_time.toFixed(3) + 's' : '-'}</td></tr>
+                        <tr><td>Content Type</td><td>${esc(r.content_type || '-')}</td></tr>
+                        <tr><td>Content Length</td><td>${r.content_length ? r.content_length.toLocaleString() + ' bytes (' + (r.content_length / 1024).toFixed(1) + 'KB)' : '-'}</td></tr>
+                        <tr><td>Redirects</td><td>${r.redirect_count || 0}</td></tr>
+                        <tr><td>Error</td><td>${r.error ? '<span class="st-red">' + esc(r.error) + '</span>' : '<span class="st-green">None</span>'}</td></tr>
+                    </table>
+                </div>
+
+                <div class="detail-card">
+                    <h3>SEO Analysis</h3>
+                    <table class="detail-table">
+                        <tr><td>Title</td><td>${r.title ? '<strong>' + esc(r.title) + '</strong> <span class="dim">(' + r.title_length + ' chars)</span>' : '<span class="st-red">Missing</span>'}</td></tr>
+                        <tr><td>Meta Description</td><td>${r.meta_description ? esc(r.meta_description).substring(0, 150) + (r.meta_description_length > 150 ? '...' : '') + ' <span class="dim">(' + r.meta_description_length + ' chars)</span>' : '<span class="st-red">Missing</span>'}</td></tr>
+                        <tr><td>H1</td><td>${r.h1 ? '<strong>' + esc(r.h1) + '</strong>' : '<span class="st-red">Missing</span>'}</td></tr>
+                        <tr><td>H1 Count</td><td>${r.h1_count} ${r.h1_count > 1 ? '<span class="st-red">(multiple!)</span>' : ''}</td></tr>
+                        <tr><td>Canonical</td><td class="mono">${r.canonical ? esc(r.canonical) : '<span class="st-red">Missing</span>'}</td></tr>
+                        <tr><td>Robots</td><td>${r.robots ? esc(r.robots) : '<span class="dim">None</span>'}</td></tr>
+                        <tr><td>Indexable</td><td>${r.indexable ? '<span class="st-green">Yes</span>' : '<span class="st-red">No</span>'}</td></tr>
+                    </table>
+                </div>
+
+                <div class="detail-card">
+                    <h3>Content</h3>
+                    <table class="detail-table">
+                        <tr><td>Word Count</td><td><strong>${r.word_count}</strong> ${r.word_count < 100 ? '<span class="st-red">(thin)</span>' : r.word_count < 300 ? '<span class="st-yellow">(low)</span>' : '<span class="st-green">(ok)</span>'}</td></tr>
+                    </table>
+                </div>
+            </div>`;
+
+            if (chain.length > 0 || r.redirect_count > 0) {
+                html += `<div class="detail-card"><h3>Redirect Chain</h3><div class="chain">`;
+                chain.forEach((url, i) => {
+                    html += `<div class="chain-step">${i + 1}. <span class="mono">${esc(url)}</span></div>`;
+                });
+                html += `<div class="chain-step final">${chain.length + 1}. <span class="mono">${esc(r.final_url || r.url)}</span> <span class="${scClass}">${sc}</span></div>`;
+                html += `</div></div>`;
+            }
+
+            if (issues.length > 0) {
+                html += `<div class="detail-card"><h3>Issues (${issues.length})</h3><ul class="issue-list">`;
+                issues.forEach(issue => {
+                    html += `<li class="issue-item">${esc(issue)}</li>`;
+                });
+                html += `</ul></div>`;
+            } else {
+                html += `<div class="detail-card"><h3>Issues</h3><p class="st-green">No issues found</p></div>`;
+            }
+
+            document.getElementById('detail-content').innerHTML = html;
+        }
+
+        function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+
+        loadDetail();
+    </script>
+</body>
+</html>
