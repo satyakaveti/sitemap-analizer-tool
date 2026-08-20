@@ -112,6 +112,12 @@ def is_sitemap_index(root: etree._Element) -> bool:
     return False
 
 
+def _is_sitemap_url(url: str) -> bool:
+    from urllib.parse import urlparse
+    path = urlparse(url).path.lower()
+    return path.endswith(".xml") or path.endswith(".xml.gz")
+
+
 async def extract_all_urls(
     sitemap_urls: list[str], state, max_depth: int = 5
 ) -> list[str]:
@@ -131,19 +137,19 @@ async def extract_all_urls(
                 return
             visited_sitemaps.add(url)
 
-            result = await fetch_sitemap(url, client)
-            if result is None:
+            if not _is_sitemap_url(url):
                 normalized = normalize_url(url)
                 if normalized and is_valid_url(normalized):
                     all_urls.add(normalized)
                 return
 
+            result = await fetch_sitemap(url, client)
+            if result is None:
+                return
+
             raw, content_type = result
             root = parse_xml(raw)
             if root is None:
-                normalized = normalize_url(url)
-                if normalized and is_valid_url(normalized):
-                    all_urls.add(normalized)
                 return
 
             if is_sitemap_index(root):
