@@ -1,804 +1,384 @@
-# sitemap-analizer-tool
-sitemap-analizer-tool
+# Sitemap & URL Health Checker — Design & Implementation Document
 
+*Reviewed and finalized: August 20, 2026*
 
-Absolutely. For your use case, I’d keep the first version single-app, lightweight, filesystem-based, and focused on sitemap/URL health + SEO/content diagnostics.
-
-Sitemap & URL Health Checker — Design & Implementation Document
-
-1. Objective
+## 1. Objective
 
 Build a publicly accessible web application hosted on Render that allows a user to enter one or more sitemap URLs and scan 20,000+ URLs.
 
 The application will:
+- Discover URLs from XML sitemaps and sitemap indexes.
+- Check every URL.
+- Detect HTTP, redirect, accessibility, SEO, and content problems.
+- Show live scan progress.
+- Generate an Excel report.
+- Allow the user to download the report.
+- Require no database.
+- Require no R2/object storage.
+- Use only the application's temporary filesystem.
+- Use a single Python/FastAPI application containing the UI and crawler.
 
-Discover URLs from XML sitemaps and sitemap indexes.
+## 2. Project Philosophy: Simple, Open, No Gatekeeping
 
-Check every URL.
+Per direction: **no authentication, no SSRF/domain blocking, no rate limiting, no per-URL or per-scan caps.** Anyone can scan any number of URLs from any domain. This is a personal/internal tool, not a hardened public service — trust is assumed.
 
-Detect HTTP, redirect, accessibility, SEO, and content problems.
+The only limits kept are **operational, not security-related** — they exist so a scan actually finishes on limited hardware, not to restrict who can use it:
 
-Show live scan progress.
+| Item | Kept? | Why |
+|---|---|---|
+| SSRF / private-IP blocking | ❌ Removed | Not a security tool — any URL is fetchable, including internal ones if the host can reach them |
+| Per-IP / per-session rate limiting | ❌ Removed | Anyone can start any number of scans |
+| Max discovered URLs cap | ❌ Removed | No limit on sitemap size |
+| Authentication / login | ❌ Removed | Fully open |
+| Domain allowlist | ❌ Removed | Any domain is fair game |
+| Crawl concurrency (default 25) | ✅ Kept | Purely a performance knob — controls how fast *your own* crawl runs, adjustable in the UI |
+| `.xml.gz` decompression | ✅ Kept, uncapped | Simplicity over robustness, per direction |
+| openpyxl write-only mode | ✅ Kept | Just an implementation detail to avoid OOM on large reports, not a restriction |
+| Single worker process | ✅ Kept | Needed for in-memory scan state to work at all |
 
-Generate an Excel report.
+**One thing worth knowing, not a recommendation to change anything:** with no cap on discovered URLs, a very large or malformed sitemap (e.g. millions of entries, or a redirect loop in sitemap indexes) could run for a very long time or exhaust memory on Render. If that ever happens in practice, the fix is a soft warning in the UI ("this sitemap has 500K+ URLs, this may take hours") rather than a hard block — easy to add later without touching the core design.
 
-Allow the user to download the report.
+## 3. Architecture
 
-Require no database.
-
-Require no R2/object storage.
-
-Use only the application's temporary filesystem.
-
-Use a single Python/FastAPI application containing the UI and crawler.
-
-
-
----
-
-2. Architecture
-
+```
 Internet
-                            │
-                            ▼
-                  ┌────────────────────┐
-                  │       Render       │
-                  │                    │
-                  │   Python App       │
-                  │                    │
-                  │ ┌────────────────┐ │
-                  │ │    FastAPI     │ │
-                  │ └───────┬────────┘ │
-                  │         │          │
-                  │ ┌───────▼────────┐ │
-                  │ │ HTML/CSS/JS UI  │ │
-                  │ └───────┬────────┘ │
-                  │         │          │
-                  │ ┌───────▼────────┐ │
-                  │ │ Sitemap Engine  │ │
-                  │ └───────┬────────┘ │
-                  │         │          │
-                  │ ┌───────▼────────┐ │
-                  │ │ Async Crawler   │ │
-                  │ └───────┬────────┘ │
-                  │         │          │
-                  │ ┌───────▼────────┐ │
-                  │ │ HTML Analyzer   │ │
-                  │ └───────┬────────┘ │
-                  │         │          │
-                  │ ┌───────▼────────┐ │
-                  │ │ Excel Generator │ │
-                  │ └───────┬────────┘ │
-                  │         │          │
-                  │      /reports      │
-                  └─────────┬──────────┘
-                            │
-                            ▼
-                       Excel Download
+    │
+    ▼
+┌────────────────────┐
+│       Render        │
+│                      │
+│   Python App         │
+│  ┌────────────────┐  │
+│  │    FastAPI      │  │
+│  └───────┬─────────┘  │
+│  ┌───────▼─────────┐  │
+│  │ HTML/CSS/JS UI   │  │
+│  └───────┬─────────┘  │
+│  ┌───────▼─────────┐  │
+│  │ Sitemap Engine   │  │
+│  └───────┬─────────┘  │
+│  ┌───────▼─────────┐  │
+│  │ Async Crawler    │  │
+│  └───────┬─────────┘  │
+│  ┌───────▼─────────┐  │
+│  │ HTML Analyzer    │  │
+│  └───────┬─────────┘  │
+│  ┌───────▼─────────┐  │
+│  │ Excel Generator  │  │
+│  └───────┬─────────┘  │
+│        /reports       │
+└──────────┬────────────┘
+           ▼
+     Excel Download
+```
 
-There is one deployable application.
+Single deployable application.
 
+## 4. Technology Stack
 
----
+| Component | Technology |
+|---|---|
+| Language | Python 3.12+ |
+| Web framework | FastAPI |
+| Server | Uvicorn (`--workers 1`) |
+| HTML templating | Jinja2 |
+| CSS | Plain CSS |
+| JavaScript | Vanilla JS |
+| HTTP client | httpx |
+| XML parsing | lxml |
+| HTML parsing | BeautifulSoup4 / lxml |
+| Excel | openpyxl (write-only mode) |
+| Compression | gzip (size-capped) |
+| Async processing | asyncio |
+| Hosting | Render |
+| Database | None |
+| Object storage | None |
+| Queue | None |
 
-3. Technology Stack
+Avoid React, Next.js, Redis, PostgreSQL, Celery for v1.
 
-Component	Technology
+## 5. Application Structure
 
-Language	Python 3.12+
-Web framework	FastAPI
-Server	Uvicorn
-HTML	Jinja2
-CSS	Plain CSS
-JavaScript	Vanilla JavaScript
-HTTP client	httpx
-XML parsing	lxml
-HTML parsing	BeautifulSoup4 / lxml
-Excel	openpyxl
-Compression	gzip support
-Async processing	asyncio
-Hosting	Render
-Database	None
-Object storage	None
-Queue	None
-
-
-Avoid React, Next.js, Redis, PostgreSQL, Celery, etc. for v1.
-
-
----
-
-4. Application Structure
-
+```
 sitemap-checker/
-│
 ├── app/
 │   ├── main.py
-│   │
 │   ├── routes/
 │   │   ├── pages.py
 │   │   ├── scan.py
 │   │   └── reports.py
-│   │
 │   ├── crawler/
 │   │   ├── sitemap.py
 │   │   ├── crawler.py
 │   │   ├── http_checker.py
 │   │   ├── html_analyzer.py
 │   │   └── robots.py
-│   │
 │   ├── reports/
 │   │   └── excel.py
-│   │
 │   ├── models/
 │   │   └── scan_models.py
-│   │
 │   ├── config.py
 │   └── utils.py
-│
 ├── templates/
 │   ├── index.html
 │   ├── scan.html
 │   └── report.html
-│
 ├── static/
-│   ├── css/
-│   │   └── style.css
-│   └── js/
-│       └── app.js
-│
+│   ├── css/style.css
+│   └── js/app.js
 ├── reports/
-│
 ├── requirements.txt
 ├── Dockerfile
 ├── .gitignore
 ├── README.md
 └── render.yaml
+```
 
+## 6. Main UI
 
----
+Simple single-page form:
+- Sitemap URL (required)
+- Additional sitemap URLs (optional, textarea)
+- Concurrent requests dropdown (default 25)
+- Start Scan button
 
-5. Main UI
+If the supplied URL is a sitemap index, child sitemaps are auto-discovered.
 
-The home page should be intentionally simple.
+## 7. Sitemap Processing
 
-┌────────────────────────────────────────────────────────┐
-│                 Sitemap Health Checker                 │
-│                                                        │
-│ Check 20,000+ URLs for HTTP, SEO and content issues.  │
-│                                                        │
-│ Sitemap URL                                            │
-│ ┌────────────────────────────────────────────────────┐ │
-│ │ https://example.com/sitemap-index.xml             │ │
-│ └────────────────────────────────────────────────────┘ │
-│                                                        │
-│ Additional Sitemap URLs                               │
-│ ┌────────────────────────────────────────────────────┐ │
-│ │ https://example.com/sitemap-movies.xml            │ │
-│ │ https://example.com/sitemap-reviews.xml           │ │
-│ └────────────────────────────────────────────────────┘ │
-│                                                        │
-│ Concurrent requests: [ 25 ▼ ]                         │
-│                                                        │
-│                  [ START SCAN ]                        │
-│                                                        │
-└────────────────────────────────────────────────────────┘
+Support: `<urlset>`, `<sitemapindex>`, `.xml`, `.xml.gz` (size-capped), nested indexes, multiple sitemap URLs, dedup, normalization.
 
-For v1, I'd allow either:
+Validate: invalid XML, invalid sitemap, missing `<loc>`, invalid URL, duplicate URL, unsupported protocol.
 
-One sitemap index URL
+## 8. URL Normalization
 
-Multiple sitemap URLs
+- Configurable trailing-slash handling
+- Strip fragments (`#...`)
+- Allow: HTTP, HTTPS
+- Reject: `javascript:`, `mailto:`, `data:`, `ftp:`
+- Dedup after normalization
 
+## 9. Crawler
 
-If the supplied URL is a sitemap index, automatically discover child sitemaps.
+Async, batched (not all 20K at once):
 
-
----
-
-6. Sitemap Processing
-
-Support:
-
-Standard sitemap
-
-<urlset>
-    <url>
-        <loc>https://example.com/page</loc>
-    </url>
-</urlset>
-
-Sitemap index
-
-<sitemapindex>
-    <sitemap>
-        <loc>https://example.com/sitemap1.xml</loc>
-    </sitemap>
-    <sitemap>
-        <loc>https://example.com/sitemap2.xml</loc>
-    </sitemap>
-</sitemapindex>
-
-Support
-
-.xml
-
-.xml.gz
-
-Sitemap indexes
-
-Nested sitemap indexes
-
-Multiple sitemap URLs
-
-Duplicate URLs
-
-URL normalization
-
-
-Validate
-
-Invalid XML
-Invalid sitemap
-Missing <loc>
-Invalid URL
-Duplicate URL
-Unsupported protocol
-
-
----
-
-7. URL Normalization
-
-Normalize URLs before crawling.
-
-Examples:
-
-https://example.com/page
-https://example.com/page/
-
-should be treated according to configuration.
-
-Remove unnecessary fragments:
-
-https://example.com/page#reviews
-
-→
-
-https://example.com/page
-
-Support:
-
-HTTP
-
-HTTPS
-
-
-Reject:
-
-javascript:
-
-mailto:
-
-data:
-
-ftp:
-
-
-Optionally detect duplicate URLs after normalization.
-
-
----
-
-8. Crawler
-
-Use asynchronous HTTP requests.
-
-Example configuration:
-
+```
 Default concurrency: 25
 Maximum concurrency: 50
-Connection timeout: 10 seconds
-Read timeout: 20 seconds
-Redirects: enabled
-Maximum redirects: 10
+Connection timeout: 10s
+Read timeout: 20s
+Redirects: enabled, max 10
 Retry: 1
+Per-host concurrency: 10
+Global concurrency: 25
+```
 
-Do not immediately fire 20,000 requests simultaneously.
+## 10. HTTP Checks
 
-Instead:
+Record per URL: status, final URL, redirect count, response time, content type, content length, error.
 
-20,000 URLs
+Status categories: 2xx success / 3xx redirect / 4xx client error / 5xx server error. Also detect: DNS errors, SSL errors, connection errors, timeout.
 
-Batch/concurrency pool
-       │
-       ├── URL 1
-       ├── URL 2
-       ├── ...
-       └── URL 25
+## 11. Redirect Analysis
 
-       ↓
+Track full redirect chain length and detect: loops, cross-domain redirects, HTTP→HTTPS, sitemap URL → different canonical.
 
-next URLs
+## 12. HTML Analysis
 
-This protects both:
+Extract (size-capped per page, see §2): title, meta description, H1, H2 count, word count, HTML size, text size, canonical tag(s), robots meta (`noindex`/`nofollow`).
 
-your Render instance
+## 13. SEO Checks
 
-the target website
+**Critical:** 4xx, 5xx, timeout, DNS failure, invalid response.
 
+**Warnings:** missing/empty/long/short title, missing/long meta description, missing H1, multiple H1s, missing/multiple canonical, noindex, nofollow, sitemap URL redirects.
 
+**Duplicates** (post-crawl aggregation): duplicate title, description, canonical, H1.
 
----
+## 14. Content Analysis
 
-9. HTTP Checks
-
-Every URL should record:
-
-Field	Example
-
-URL	/movies/darling
-Status	200
-Final URL	/movies/darling
-Redirect count	0
-Response time	0.42s
-Content type	text/html
-Content length	84 KB
-Error	None
-
-
-Status categories
-
-Success
-
-200–299
-
-Redirect
-
-300–399
-
-Client error
-
-400–499
-
-Server error
-
-500–599
-
-Specific issues
-
-Detect:
-
-301
-
-302
-
-307
-
-308
-
-404
-
-410
-
-401
-
-403
-
-429
-
-500
-
-502
-
-503
-
-504
-
-DNS errors
-
-SSL errors
-
-Connection errors
-
-Timeout
-
-
-
----
-
-10. Redirect Analysis
-
-For every redirect:
-
-Original URL
-     ↓
-301
-     ↓
-URL 2
-     ↓
-301
-     ↓
-URL 3
-
-Report:
-
-Redirect chain: 2
-
-Detect:
-
-Redirect
-
-Redirect chain
-
-Redirect loop
-
-Redirect to different domain
-
-HTTP → HTTPS
-
-Sitemap URL → different canonical URL
-
-
-
----
-
-11. HTML Analysis
-
-For successful HTML pages, download and parse the HTML.
-
-Extract:
-
-Basic
-
-Title
-Meta description
-H1
-H2 count
-Word count
-HTML size
-Text size
-
-Canonical
-
-<link rel="canonical" href="...">
-
-Check:
-
-Missing canonical
-
-Multiple canonical tags
-
-Canonical points elsewhere
-
-Canonical is invalid
-
-
-Robots
-
-Detect:
-
-<meta name="robots" content="noindex">
-
-and:
-
-<meta name="robots" content="nofollow">
-
-Report:
-
-indexable
-noindex
-nofollow
-noindex,nofollow
-
-
----
-
-12. SEO Checks
-
-The report should detect:
-
-Critical
-
-HTTP 4xx
-
-HTTP 5xx
-
-Timeout
-
-DNS failure
-
-Invalid response
-
-
-Warnings
-
-Missing <title>
-
-Empty title
-
-Very long title
-
-Very short title
-
-Missing meta description
-
-Very long meta description
-
-Missing H1
-
-Multiple H1s
-
-Missing canonical
-
-Multiple canonical tags
-
-noindex
-
-nofollow
-
-Sitemap URL redirects
-
-
-Duplicates
-
-After all URLs are scanned:
-
-Duplicate title
-
-Duplicate description
-
-Duplicate canonical
-
-Duplicate H1
-
-
-This requires an aggregation stage after crawling.
-
-
----
-
-13. Content Analysis
-
-This is particularly important for your use case.
-
-Detect:
-
-Empty content
-
-Very little text
-
-Thin content
-
-Configurable threshold:
-
+```
 < 100 words       Very thin
 100–299 words     Thin
 300+ words        Normal
+```
+Warnings, not automatic failures — some page types legitimately have little text.
 
-But these should be warnings, not automatic failures.
+**Soft-404 detection:** HTTP 200 but body contains phrases like "page not found," "content unavailable," or has near-zero meaningful content.
 
-A movie page could legitimately have limited text.
+**Application-error detection:** HTTP 200 but body contains "internal server error," "exception," "database error," etc.
 
-Soft 404 detection
+## 15. Broken Images (optional, off by default)
 
-A page returns:
+Extract `<img src>`, optionally verify each. Off by default because it multiplies request volume significantly on 20K-page crawls.
 
-HTTP 200
+## 16. Internal Links (optional, off by default)
 
-but contains:
+Same rationale as images — off by default for v1.
 
-Page not found
-Movie not found
-404
-Content unavailable
+## 17. Robots.txt
 
-or has extremely little meaningful content.
+Fetch and parse before scanning. Report existence, accessibility, declared sitemaps.
 
-Report:
+**Default behavior:** robots.txt is informational only — disallowed URLs are still fetched and checked like any other URL, just labeled in the report (e.g. "disallowed by robots.txt"). No enforcement, per the open-access direction in §2.
 
-⚠ Possible soft 404
+## 18. Sitemap vs Page Comparison
 
+For every sitemap URL, compare against actual HTTP status, canonical target, robots directive, and indexability. Flag mismatches (e.g. sitemap URL ≠ canonical, sitemap URL → 404/noindex/redirect).
 
----
+## 19. Live Progress UI
 
-14. Detect Application Error Pages
+Poll `GET /api/scan/{scan_id}/status` every 1–2s. No WebSocket needed for v1. Show totals, status breakdown, average response time, elapsed/estimated time (labeled as estimate).
 
-This is very useful.
+## 20. Scan Lifecycle
 
-For example:
+```
+START → Validate sitemap → Discover sitemaps → Extract URLs → Deduplicate
+  → Start crawler → Update progress → Analyze pages
+  → Aggregate duplicate issues → Generate Excel → COMPLETED
+```
 
-HTTP 200
+## 21. Scan States
 
-but HTML contains:
+In-memory dict, single-worker process only (see §2):
+```python
+scans = { scan_id: scan_state }
+```
+States: `QUEUED`, `RUNNING`, `COMPLETED`, `FAILED`, `CANCELLED`.
 
-Internal Server Error
-Something went wrong
-Application Error
-Exception
-Database error
+## 22. Cancel Scan
 
-Report:
+`POST /api/scan/{scan_id}/cancel` — crawler stops gracefully after in-flight requests complete.
 
-❌ Possible application error
+## 23. Excel Report
 
-This catches situations where your application incorrectly returns 200.
+Filename: `sitemap_scan_YYYY-MM-DD_HHMMSS.xlsx`
 
+- **Sheet 1 — Summary**: scan info, result counts, SEO/content issue counts
+- **Sheet 2 — All URLs**: full column set (URL, status, final URL, redirect count, response time, content type/size, title, meta description, H1, word count, canonical, robots, indexable, issue)
+- **Sheet 3 — Errors**: 4xx/5xx/timeout/DNS/SSL only
+- **Sheet 4 — SEO Issues**
+- **Sheet 5 — Content Issues**: thin content, soft-404, application errors
+- **Sheet 6 — Redirects**: chains
+- **Sheet 7 — Duplicates**
 
----
+Generated once, at scan completion (see §2 re: progressive-generation conflict).
 
-15. Broken Images
+## 24. Excel Formatting
 
-For each HTML page:
+Frozen header row, auto filters, sensible column widths, wrapped text, color coding (green/yellow/red/orange by status), human-readable issue labels (e.g. "❌ 404 Not Found", "⚠ Thin content: 87 words").
 
-Extract:
+## 25. File Management
 
-<img src="...">
+Store in `/reports/`. Auto-delete files older than 24h (or configurable, e.g. 7 days). Treat Render's filesystem as ephemeral, not permanent.
 
-Then optionally check image URLs.
+## 26. Security
 
-For example:
+None by design (see §2). Any URL, any domain, any scheme the HTTP client supports is fetchable. No IP blocking, no domain restriction, no auth.
 
-/movie/darling
+## 27. Abuse Protection
 
-Images: 8
-Working: 7
-Broken: 1
+None by design (see §2). No caps on sitemap count, URL count, sitemap size, nesting depth, or scan duration. Crawl concurrency remains adjustable purely as a performance setting, not a limit on usage.
 
-I'd make this optional, because checking 20K pages + every image can multiply the number of requests dramatically.
+## 28. User-Agent
 
-UI:
+```
+SitemapHealthChecker/1.0 (+https://your-domain.example)
+```
 
-☑ Check images
-☐ Check external links
+## 29. Retry Strategy
 
-Default:
+Retry once (exponential backoff, 1s/2s): timeout, 502, 503, 504.
+No retry: 404, 410, 401, 403.
 
-Check images = OFF
+## 30. Rate Limiting
 
+Global concurrency 25, per-host concurrency 10 — prevents hammering any single target domain regardless of sitemap size.
 
----
+## 31. Scan Options (v1: hide behind defaults)
 
-16. Internal Links
+Concurrency, timeout, follow-redirects, check-SEO, check-content (on by default); check-images, check-internal-links (off by default); custom user agent.
 
-Optional second-level analysis.
+## 32. API Design
 
-For each page:
-
-Internal links: 42
-Broken internal links: 2
-
-Again, make it optional for v1 because a 20K-page crawl can become much larger.
-
-
----
-
-17. Robots.txt
-
-Before scanning:
-
-https://example.com/robots.txt
-
-Check:
-
-Exists
-
-Accessible
-
-Sitemap declarations
-
-Basic robots directives
-
-
-Do not automatically treat robots.txt disallow as an HTTP failure.
-
-Report separately:
-
-Robots.txt
-──────────────
-Accessible: Yes
-Sitemaps: 5
-
-
----
-
-18. Sitemap vs Page Comparison
-
-This is one of the most useful features.
-
-For every sitemap URL:
-
-Sitemap URL
-    ↓
-HTTP status
-    ↓
-Canonical
-    ↓
-robots
-    ↓
-indexability
-
-Example:
-
-Sitemap:
-https://tollybo.com/movie/darling
-
-HTTP:
-200
-
-Canonical:
-https://tollybo.com/movies/darling
-
-Result:
-⚠ Sitemap URL differs from canonical
-
-Also detect:
-
-Sitemap URL → 404
-Sitemap URL → noindex
-Sitemap URL → redirect
-Sitemap URL → canonical elsewhere
-
-
----
-
-19. Live Progress UI
-
-Do not wait until the entire scan completes.
-
-Show:
-
-Scanning...
-
-Total URLs:       20,438
-Completed:         8,321
-Remaining:        12,117
-
-Progress
-████████░░░░░░░░░░ 40.7%
-
-200 OK             8,002
-3xx                  152
-4xx                  112
-5xx                   11
-Timeout               44
-Other                 0
-
-Average response:   0.83 sec
-
-Update every 1–2 seconds.
-
-For v1, simple polling is enough:
-
-GET /api/scan/{scan_id}/status
-
-No WebSocket required.
-
-
----
-
-20. Scan Lifecycle
-
-START
-  │
-  ▼
-Validate sitemap
-  │
-  ▼
-Discover sitemaps
-  │
-  ▼
-Extract URLs
-  │
-  ▼
-Deduplicate
-  │
-  ▼
-Start crawler
-  │
-  ▼
-Update progress
-  │
+```
+POST   /api/scan                       → { scan_id, status }
+GET    /api/scan/{scan_id}/status      → progress + counts
+POST   /api/scan/{scan_id}/cancel
+GET    /api/scan/{scan_id}/download
+GET    /
+```
+
+## 33. Render Deployment Considerations
+
+- Single worker process (state consistency — see §2)
+- Bounded concurrency (protects both Render instance and target sites)
+- Discard full HTML after per-page analysis — never hold 20K full documents in memory
+- Handle shutdown/restart gracefully (in-progress scans should fail cleanly, not corrupt state)
+- Report generated once at completion, not incrementally
+
+## 34. Performance Target
+
+No fixed duration promise — depends on target server speed. At concurrency 25, expect tens of minutes for 20K URLs against typical sites. UI shows elapsed time + estimated remaining, labeled as an estimate.
+
+## 35. Error Handling
+
+One failed URL never terminates the scan — record and continue. Sitemap-level failure (can't fetch/parse the sitemap itself) does prevent scan start.
+
+## 36. Logging
+
+```
+SCAN_STARTED, SITEMAP_DISCOVERED, URL_CHECK_STARTED, URL_CHECK_FAILED,
+SCAN_PROGRESS, SCAN_COMPLETED, REPORT_GENERATED
+```
+Never log full HTML response bodies.
+
+## 37. Home Page Summary (post-scan)
+
+Total checked, status breakdown (200/3xx/4xx/5xx/other), SEO issue count, content issue count, duration, download + new-scan buttons.
+
+## 38. v1 Feature Set
+
+**Must have:** sitemap URL input, index support, multi-sitemap, extraction, dedup, async crawler, status code categorization, timeout/DNS/SSL detection, redirect detection + final URL + response time, HTML parsing (title/meta/H1/canonical/robots/word count), thin-content + soft-404 + application-error detection, live progress, cancel, Excel export, summary, temporary storage, **plus the guardrails in §2**.
+
+**v1.1:** broken image checking, internal link checking, structured data validation, Open Graph, hreflang, sitemap-vs-robots.txt comparison, page screenshots.
+
+**Avoid initially:** user accounts, database, Redis, persistent storage, AI analysis, login, complex dashboard, React, microservices.
+
+## 39. Final Architecture Diagram
+
+```
+┌──────────────────────────────┐
+│            Render            │
+│       Python 3.12            │
+│  ┌────────────────────────┐  │
+│  │        FastAPI         │  │
+│  └───────────┬────────────┘  │
+│  ┌───────────▼────────────┐  │
+│  │      HTML / CSS / JS   │  │
+│  └───────────┬────────────┘  │
+│  ┌───────────▼────────────┐  │
+│  │    Scan Controller     │  │
+│  └───────────┬────────────┘  │
+│       ┌──────▼──────┐        │
+│       │   Sitemap   │        │
+│       │   Parser    │        │
+│       └──────┬──────┘        │
+│       ┌──────▼──────┐        │
+│       │ Async HTTP  │        │
+│       │   Crawler   │        │
+│       └──────┬──────┘        │
+│       ┌──────▼──────┐        │
+│       │ HTML/SEO/   │        │
+│       │  Content    │        │
+│       │  Analyzer   │        │
+│       └──────┬──────┘        │
+│       ┌──────▼──────┐        │
+│       │   Excel     │        │
+│       │  Generator  │        │
+│       └─────────────┘        │
+└──────────────────────────────┘
+```
   ▼
 Analyze pages
   │
