@@ -1,0 +1,304 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #f5f7fa;
+    color: #333;
+    line-height: 1.6;
+}
+
+.container {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 2rem;
+}
+
+header {
+    text-align: center;
+    margin-bottom: 2rem;
+}
+
+header h1 {
+    font-size: 2rem;
+    color: #1a1a2e;
+    margin-bottom: 0.5rem;
+}
+
+.subtitle {
+    color: #666;
+    font-size: 1.1rem;
+}
+
+.hidden {
+    display: none !important;
+}
+
+form {
+    background: white;
+    padding: 2rem;
+    border-radius: 12px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+}
+
+.form-group {
+    margin-bottom: 1.25rem;
+}
+
+.form-group label {
+    display: block;
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+    color: #444;
+}
+
+.required {
+    color: #e74c3c;
+}
+
+input[type="url"],
+textarea,
+select {
+    width: 100%;
+    padding: 0.75rem 1rem;
+    border: 2px solid #e0e0e0;
+    border-radius: 8px;
+    font-size: 1rem;
+    transition: border-color 0.2s;
+}
+
+input[type="url"]:focus,
+textarea:focus,
+select:focus {
+    outline: none;
+    border-color: #4472C4;
+}
+
+.form-row {
+    display: flex;
+    gap: 1rem;
+}
+
+.form-row .form-group {
+    flex: 1;
+}
+
+.btn {
+    padding: 0.75rem 1.5rem;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.btn-primary {
+    background: #4472C4;
+    color: white;
+    width: 100%;
+}
+
+.btn-primary:hover {
+    background: #3461b3;
+}
+
+.btn-secondary {
+    background: #e0e0e0;
+    color: #333;
+}
+
+.btn-secondary:hover {
+    background: #d0d0d0;
+}
+
+.btn-danger {
+    background: #e74c3c;
+    color: white;
+    margin-top: 1rem;
+}
+
+.btn-danger:hover {
+    background: #c0392b;
+}
+
+#progress-section,
+#results-section,
+#error-section {
+    background: white;
+    padding: 2rem;
+    border-radius: 12px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+    margin-top: 1.5rem;
+}
+
+#progress-section h2,
+#results-section h2 {
+    margin-bottom: 1.5rem;
+    color: #1a1a2e;
+}
+
+.progress-bar-container {
+    background: #e9ecef;
+    border-radius: 20px;
+    height: 36px;
+    overflow: hidden;
+    margin-bottom: 1.5rem;
+}
+
+.progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, #4472C4, #5a9cf5);
+    width: 0%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: width 0.3s ease;
+    min-width: 40px;
+}
+
+#progress-text {
+    color: white;
+    font-weight: 700;
+    font-size: 0.9rem;
+}
+
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.stat-card {
+    background: #f8f9fa;
+    border-radius: 8px;
+    padding: 1rem;
+    text-align: center;
+}
+
+.stat-card.green { border-left: 4px solid #27ae60; }
+.stat-card.yellow { border-left: 4px solid #f39c12; }
+.stat-card.red { border-left: 4px solid #e74c3c; }
+
+.stat-value {
+    font-size: 1.8rem;
+    font-weight: 700;
+    color: #1a1a2e;
+}
+
+.stat-label {
+    font-size: 0.85rem;
+    color: #888;
+    margin-top: 0.25rem;
+}
+
+.time-info {
+    display: flex;
+    justify-content: space-between;
+    padding: 1rem;
+    background: #f8f9fa;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.95rem;
+}
+
+.summary-card {
+    background: #f8f9fa;
+    border-radius: 12px;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+}
+
+.summary-header {
+    text-align: center;
+    margin-bottom: 1.5rem;
+}
+
+.summary-total {
+    font-size: 3rem;
+    font-weight: 700;
+    color: #1a1a2e;
+    display: block;
+}
+
+.status-breakdown {
+    display: flex;
+    justify-content: center;
+    gap: 2rem;
+    margin-bottom: 1.5rem;
+    flex-wrap: wrap;
+}
+
+.status-item {
+    text-align: center;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    min-width: 80px;
+}
+
+.status-item.green { background: #d4edda; }
+.status-item.yellow { background: #fff3cd; }
+.status-item.red { background: #f8d7da; }
+.status-item.orange { background: #fff3cd; }
+
+.status-count {
+    display: block;
+    font-size: 1.5rem;
+    font-weight: 700;
+}
+
+.status-label {
+    font-size: 0.8rem;
+    color: #666;
+}
+
+.issue-summary {
+    display: flex;
+    justify-content: center;
+    gap: 2rem;
+    font-size: 1rem;
+}
+
+.actions {
+    display: flex;
+    gap: 1rem;
+    justify-content: center;
+}
+
+.actions .btn {
+    min-width: 200px;
+}
+
+.error-card {
+    text-align: center;
+    padding: 2rem;
+}
+
+.error-card h2 {
+    color: #e74c3c;
+    margin-bottom: 1rem;
+}
+
+.error-card p {
+    margin-bottom: 1.5rem;
+    color: #666;
+}
+
+@media (max-width: 600px) {
+    .container {
+        padding: 1rem;
+    }
+    .stats-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+    .status-breakdown {
+        gap: 0.5rem;
+    }
+    .form-row {
+        flex-direction: column;
+    }
+}
