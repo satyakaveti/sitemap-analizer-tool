@@ -41,31 +41,26 @@ class AsyncCrawler:
                 for url in batch:
                     if self.state.is_cancelled:
                         break
-                    tasks.append(self._check_one(url, checker, client))
+                    tasks.append(self._check_one(url, checker))
 
                 if tasks:
                     await asyncio.gather(*tasks, return_exceptions=True)
 
-    async def _check_one(self, url: str, checker, client):
+    async def _check_one(self, url: str, checker):
         from app.crawler.html_analyzer import analyze_html
 
         async with self.global_semaphore:
             if self.state.is_cancelled:
                 return
 
-            result = await checker.check_url(url)
+            result = await checker.check_url(url, fetch_body=True)
 
-            if result.status_code and 200 <= result.status_code < 400:
+            if result.raw_html and result.status_code and 200 <= result.status_code < 400:
                 try:
                     if result.final_url and result.final_url != url:
                         result.issues.append(f"Sitemap URL redirects to {result.final_url}")
 
-                    resp = await client.get(
-                        result.final_url or url,
-                        follow_redirects=False,
-                    )
-                    html = resp.content
-                    analysis = analyze_html(html, url)
+                    analysis = analyze_html(result.raw_html, url)
                     result.title = analysis.get("title", "")
                     result.title_length = analysis.get("title_length", 0)
                     result.meta_description = analysis.get("meta_description", "")
@@ -77,8 +72,9 @@ class AsyncCrawler:
                     result.robots = analysis.get("robots", "")
                     result.indexable = analysis.get("indexable", True)
                     result.issues.extend(analysis.get("issues", []))
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"HTML analysis failed for {url}: {e}")
 
+            result.raw_html = None
             self.state.results.append(result)
             self.state.completed += 1

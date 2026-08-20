@@ -8,7 +8,7 @@ import httpx
 from app.config import (
     CONNECT_TIMEOUT, READ_TIMEOUT, MAX_REDIRECTS,
     RETRY_COUNT, RETRY_BACKOFF, RETRY_STATUSES, NO_RETRY_STATUSES,
-    USER_AGENT, PER_HOST_CONCURRENCY,
+    USER_AGENT, PER_HOST_CONCURRENCY, MAX_HTML_PARSE_SIZE,
 )
 from app.models.scan_models import URLResult
 from app.utils import get_domain
@@ -28,7 +28,7 @@ class HTTPChecker:
     def __init__(self, client: httpx.AsyncClient):
         self.client = client
 
-    async def check_url(self, url: str) -> URLResult:
+    async def check_url(self, url: str, fetch_body: bool = False) -> URLResult:
         result = URLResult(url=url)
         host = get_domain(url)
         sem = get_host_semaphore(host)
@@ -52,6 +52,9 @@ class HTTPChecker:
 
                     if resp.history:
                         result.redirect_chain = [str(r.url) for r in resp.history]
+
+                    if fetch_body and 200 <= resp.status_code < 400:
+                        result.raw_html = resp.content[:MAX_HTML_PARSE_SIZE]
 
                     if resp.status_code in RETRY_STATUSES and attempt < RETRY_COUNT:
                         await asyncio.sleep(RETRY_BACKOFF[attempt])

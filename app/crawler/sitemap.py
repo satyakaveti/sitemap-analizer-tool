@@ -2,7 +2,6 @@ import gzip
 import logging
 from io import BytesIO
 from typing import Optional
-from xml.etree import ElementTree
 
 import httpx
 from lxml import etree
@@ -15,17 +14,39 @@ logger = logging.getLogger(__name__)
 SITEMAP_NS = "http://www.sitemaps.org/schemas/sitemap/0.9"
 
 
-async def fetch_sitemap(url: str, client: httpx.AsyncClient) -> Optional[bytes]:
+def _is_html_content(raw: bytes) -> bool:
+    snippet = raw[:500].lower().strip()
+    return any(tag in snippet for tag in [b"<html", b"<!doc", b"<!doctype", b"<head", b"<body"])
+
+
+def _fix_xml_entities(raw: bytes) -> bytes:
+    text = raw.decode("utf-8", errors="replace")
+    fixed = text.replace("&", "&amp;")
+    fixed = fixed.replace("&amp;amp;", "&amp;")
+    return fixed.encode("utf-8")
+
+
+async def fetch_sitemap(url: str, client: httpx.AsyncClient) -> Optional[tuple[bytes, str]]:
     try:
         resp = await client.get(url, follow_redirects=True)
         resp.raise_for_status()
+        content_type = resp.headers.get("content-type", "")
         content = resp.content
-        if url.endswith(".gz"):
+
+        if url.endswith(".gz") or "gzip" in content_type or "x-gzip" in content_type:
             if len(content) > MAX_XML_GZ_SIZE:
                 logger.warning(f"Sitemap too large: {url} ({len(content)} bytes)")
                 return None
-            content = gzip.decompress(content)
-        return content
+            try:
+                content = gzip.decompress(content)
+            except Exception:
+                pass
+
+        if _is_html_content(content):
+            logger.warning(f"Sitemap URL returned HTML, not XML: {url}")
+            return None
+
+        return (content, content_type)
     except Exception as e:
         logger.error(f"Failed to fetch sitemap {url}: {e}")
         return None
@@ -33,13 +54,27 @@ async def fetch_sitemap(url: str, client: httpx.AsyncClient) -> Optional[bytes]:
 
 def parse_xml(raw: bytes) -> Optional[etree._Element]:
     try:
-        return etree.HTML(raw) if raw[:5] == b"<html" else etree.fromstring(raw)
+        parser = etree.XMLParser(recover=True, resolve_entities=True)
+        root = etree.fromstring(raw, parser=parser)
+        return root
+    except etree.XMLSyntaxError:
+        pass
+
+    try:
+        fixed = _fix_xml_entities(raw)
+        parser = etree.XMLParser(recover=True)
+        root = etree.fromstring(fixed, parser=parser)
+        return root
     except Exception:
-        try:
-            return etree.parse(BytesIO(raw)).getroot()
-        except Exception as e:
-            logger.error(f"Failed to parse XML: {e}")
-            return None
+        pass
+
+    try:
+        parser = etree.HTMLParser()
+        doc = etree.HTML(raw, parser=parser)
+        return doc
+    except Exception as e:
+        logger.error(f"Failed to parse XML/HTML: {e}")
+        return None
 
 
 def parse_urlset(root: etree._Element) -> list[str]:
@@ -96,10 +131,11 @@ async def extract_all_urls(
                 return
             visited_sitemaps.add(url)
 
-            raw = await fetch_sitemap(url, client)
-            if raw is None:
+            result = await fetch_sitemap(url, client)
+            if result is None:
                 return
 
+            raw, content_type = result
             root = parse_xml(raw)
             if root is None:
                 return

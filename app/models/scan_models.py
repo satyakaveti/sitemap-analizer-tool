@@ -37,6 +37,7 @@ class URLResult:
     indexable: bool = True
 
     issues: list[str] = field(default_factory=list)
+    raw_html: Optional[bytes] = field(default=None, repr=False)
 
 
 @dataclass
