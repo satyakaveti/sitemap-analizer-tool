@@ -119,8 +119,10 @@ def _is_sitemap_url(url: str) -> bool:
 
 
 async def extract_all_urls(
-    sitemap_urls: list[str], state, max_depth: int = 5
+    scan_id: str, sitemap_urls: list[str], max_depth: int = 5
 ) -> list[str]:
+    from app import db
+
     all_urls: set[str] = set()
     visited_sitemaps: set[str] = set()
 
@@ -133,7 +135,8 @@ async def extract_all_urls(
         async def _process(url: str, depth: int = 0):
             if depth > max_depth or url in visited_sitemaps:
                 return
-            if state.is_cancelled:
+            status = db.get_status(scan_id)
+            if status and status["is_cancelled"]:
                 return
             visited_sitemaps.add(url)
 

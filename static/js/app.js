@@ -181,7 +181,52 @@ function showResults(data) {
     const dlBtn = document.getElementById('download-btn');
     dlBtn.href = `/api/scan/${currentScanId}/download`;
 
+    loadSummaryCards(currentScanId);
     showSection('results');
+}
+
+async function loadSummaryCards(scanId) {
+    try {
+        const resp = await fetch(`/api/scan/${scanId}/summary`);
+        const data = await resp.json();
+        renderSummaryCards(data);
+    } catch (e) {}
+}
+
+function renderSummaryCards(data) {
+    const container = document.getElementById('summary-cards');
+    if (!container) return;
+    let html = '';
+
+    if (data.error_summary && data.error_summary.length) {
+        html += '<div class="summary-group"><h3>Error Groups</h3><table class="summary-table">';
+        html += '<tr><th>Error</th><th>Count</th><th>Sample URLs</th></tr>';
+        data.error_summary.forEach(e => {
+            const urls = (e.sample_urls || []).slice(0, 3).map(u => `<span class="sample-url">${esc(u)}</span>`).join('<br>');
+            html += `<tr><td>${esc(e.error_type)}</td><td class="count-cell">${e.count}</td><td class="sample-cell">${urls}</td></tr>`;
+        });
+        html += '</table></div>';
+    }
+
+    if (data.seo_summary && data.seo_summary.length) {
+        html += '<div class="summary-group"><h3>SEO Issues</h3><table class="summary-table">';
+        html += '<tr><th>Issue</th><th>Count</th></tr>';
+        data.seo_summary.forEach(s => {
+            html += `<tr><td>${esc(s.issue)}</td><td class="count-cell">${s.count}</td></tr>`;
+        });
+        html += '</table></div>';
+    }
+
+    if (data.content_summary && data.content_summary.length) {
+        html += '<div class="summary-group"><h3>Content Issues</h3><table class="summary-table">';
+        html += '<tr><th>Issue</th><th>Count</th></tr>';
+        data.content_summary.forEach(s => {
+            html += `<tr><td>${esc(s.issue)}</td><td class="count-cell">${s.count}</td></tr>`;
+        });
+        html += '</table></div>';
+    }
+
+    container.innerHTML = html;
 }
 
 function formatTime(seconds) {
