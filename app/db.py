@@ -175,6 +175,7 @@ def get_status(scan_id: str) -> Optional[dict]:
 
     d = dict(row)
     d["sitemaps"] = json.loads(d["sitemaps"])
+    d["total"] = d["total_urls"]
     d["percentage"] = round((d["completed"] / d["total_urls"] * 100), 2) if d["total_urls"] > 0 else 0
 
     elapsed = 0.0

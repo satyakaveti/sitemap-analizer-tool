@@ -125,6 +125,7 @@ async def extract_all_urls(
 
     all_urls: set[str] = set()
     visited_sitemaps: set[str] = set()
+    cancelled = False
 
     async with httpx.AsyncClient(
         timeout=httpx.Timeout(30),
@@ -133,35 +134,50 @@ async def extract_all_urls(
     ) as client:
 
         async def _process(url: str, depth: int = 0):
-            if depth > max_depth or url in visited_sitemaps:
+            nonlocal cancelled
+            if cancelled or depth > max_depth or url in visited_sitemaps:
                 return
-            status = db.get_status(scan_id)
-            if status and status["is_cancelled"]:
-                return
+            if depth > 0:
+                s = db.get_status(scan_id)
+                if s and s["is_cancelled"]:
+                    cancelled = True
+                    return
             visited_sitemaps.add(url)
+
+            logger.info(f"[scan={scan_id}] Processing sitemap: {url} (depth={depth})")
 
             if not _is_sitemap_url(url):
                 normalized = normalize_url(url)
                 if normalized and is_valid_url(normalized):
                     all_urls.add(normalized)
+                    logger.info(f"[scan={scan_id}] Added page URL ({len(all_urls)} total): {normalized[:100]}")
                 return
 
-            result = await fetch_sitemap(url, client)
+            try:
+                result = await fetch_sitemap(url, client)
+            except Exception as e:
+                logger.error(f"[scan={scan_id}] Failed to fetch {url}: {e}")
+                return
+
             if result is None:
+                logger.warning(f"[scan={scan_id}] No result from {url}")
                 return
 
             raw, content_type = result
             root = parse_xml(raw)
             if root is None:
+                logger.warning(f"[scan={scan_id}] Failed to parse XML from {url}")
                 return
 
             if is_sitemap_index(root):
                 child_urls = parse_sitemap_index(root)
+                logger.info(f"[scan={scan_id}] Sitemap index has {len(child_urls)} children")
                 for child in child_urls:
                     child_resolved = resolve_sitemap_url(url, child)
                     await _process(child_resolved, depth + 1)
             else:
                 found = parse_urlset(root)
+                logger.info(f"[scan={scan_id}] URL set has {len(found)} URLs")
                 for u in found:
                     normalized = normalize_url(u)
                     if normalized and is_valid_url(normalized):
@@ -170,4 +186,5 @@ async def extract_all_urls(
         for surl in sitemap_urls:
             await _process(surl)
 
+    logger.info(f"[scan={scan_id}] Extracted {len(all_urls)} URLs from sitemaps")
     return list(all_urls)
