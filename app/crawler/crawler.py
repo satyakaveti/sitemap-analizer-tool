@@ -17,10 +17,7 @@ class AsyncCrawler:
         self.global_semaphore = asyncio.Semaphore(DEFAULT_CONCURRENCY)
 
         async with httpx.AsyncClient(
-            timeout=httpx.Timeout(
-                connect=CONNECT_TIMEOUT,
-                read=READ_TIMEOUT,
-            ),
+            timeout=httpx.Timeout(READ_TIMEOUT),
             headers={"User-Agent": USER_AGENT},
             follow_redirects=True,
             limits=httpx.Limits(

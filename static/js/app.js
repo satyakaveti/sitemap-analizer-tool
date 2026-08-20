@@ -123,6 +123,9 @@ function updateProgress(data) {
     document.getElementById('stat-elapsed').textContent = formatTime(data.elapsed);
     document.getElementById('stat-eta').textContent = data.eta ? formatTime(data.eta) + ' (est.)' : 'calculating...';
 
+    const h2 = progressSection.querySelector('h2');
+    h2.textContent = data.phase || 'Scanning...';
+
     const curUrl = document.getElementById('current-url');
     curUrl.textContent = data.current_url || '-';
     curUrl.title = data.current_url || '';

@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import uuid
 from datetime import datetime
 
@@ -7,6 +8,8 @@ from pydantic import BaseModel
 
 from app.models.scan_models import ScanState, ScanStatus
 from app.config import DEFAULT_CONCURRENCY
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -65,6 +68,7 @@ async def scan_status(scan_id: str):
         "report_path": s.report_path,
         "current_url": s.current_url,
         "recent_results": s.recent_results,
+        "phase": s.phase,
     }
 
 
@@ -84,6 +88,8 @@ async def _run_scan(scan_id: str, state: ScanState):
     try:
         state.status = ScanStatus.RUNNING
         state.started_at = datetime.utcnow()
+        state.phase = "Fetching sitemaps"
+        logger.info(f"scan={scan_id} phase=fetching_sitemaps sitemaps={state.sitemaps}")
 
         urls = await extract_all_urls(state.sitemaps, state)
         if state.is_cancelled:
@@ -95,6 +101,8 @@ async def _run_scan(scan_id: str, state: ScanState):
             return
 
         state.total_urls = len(urls)
+        state.phase = "Crawling URLs"
+        logger.info(f"scan={scan_id} phase=crawling urls_found={len(urls)}")
 
         crawler = AsyncCrawler(state)
         await crawler.run(urls)

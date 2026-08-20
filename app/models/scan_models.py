@@ -66,6 +66,7 @@ class ScanState:
     robots_info: dict = field(default_factory=dict)
     current_url: str = ""
     recent_results: list[dict] = field(default_factory=list)
+    phase: str = ""
 
     @property
     def elapsed_seconds(self) -> float:
