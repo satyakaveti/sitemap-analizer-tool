@@ -9,9 +9,13 @@
 </head>
 <body>
     <div class="container-wide">
+        <nav class="top-nav">
+            <a href="/" target="_blank" class="nav-home">Sitemap Checker</a>
+            <a href="/search" target="_blank" class="nav-link">Search Scan</a>
+        </nav>
         <header>
             <div class="breadcrumb">
-                <a href="/">Home</a> / <a href="/scan/{{ scan_id }}/urls">URLs</a> / <span>Detail</span>
+                <a href="/" target="_blank">Home</a> / <a href="/scan/{{ scan_id }}" target="_blank">Scan Detail</a> / <a href="/scan/{{ scan_id }}/urls" target="_blank">URLs</a> / <span>Detail</span>
             </div>
             <h1>URL Analysis Detail</h1>
         </header>

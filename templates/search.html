@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Search Scan - Sitemap Health Checker</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="/static/css/pages.css">
+    <style>
+        .search-hero { text-align: center; margin-bottom: 2rem; }
+        .search-hero h1 { font-size: 1.8rem; color: #1a1a2e; margin-bottom: 0.5rem; }
+        .search-hero p { color: #666; margin-bottom: 1.5rem; }
+        .search-form { max-width: 600px; margin: 0 auto; }
+        .search-form .input-row { display: flex; gap: 0.75rem; }
+        .search-form input[type="text"] {
+            flex: 1; padding: 0.85rem 1rem; border: 2px solid #e0e0e0;
+            border-radius: 8px; font-size: 1rem; font-family: monospace;
+        }
+        .search-form input[type="text"]:focus { outline: none; border-color: #4472C4; }
+        .search-form button { padding: 0.85rem 2rem; font-size: 1rem; white-space: nowrap; }
+        .search-result { margin-top: 1.5rem; }
+        .scan-card {
+            background: white; border-radius: 12px; padding: 1.5rem;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.08); max-width: 600px; margin: 0 auto;
+        }
+        .scan-card .scan-card-header { display: flex; justify-content: space-between; align-items: start; margin-bottom: 1rem; }
+        .scan-card .scan-card-header h3 { font-size: 1.1rem; color: #1a1a2e; margin: 0; }
+        .scan-card .status-badge {
+            padding: 0.2rem 0.75rem; border-radius: 20px; font-size: 0.78rem; font-weight: 700;
+        }
+        .scan-card .status-badge.running { background: #d1ecf1; color: #0c5460; }
+        .scan-card .status-badge.completed { background: #d4edda; color: #155724; }
+        .scan-card .status-badge.failed { background: #f8d7da; color: #721c24; }
+        .scan-card .status-badge.queued { background: #fff3cd; color: #856404; }
+        .scan-card .status-badge.cancelled { background: #e2e3e5; color: #383d41; }
+        .scan-card .meta-row { display: flex; gap: 1.5rem; flex-wrap: wrap; font-size: 0.85rem; color: #666; margin-bottom: 1rem; }
+        .scan-card .meta-row span { display: flex; align-items: center; gap: 0.3rem; }
+        .scan-card .stats-mini { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.75rem; margin-bottom: 1rem; }
+        .scan-card .mini-stat { text-align: center; background: #f8f9fa; border-radius: 8px; padding: 0.75rem 0.5rem; }
+        .scan-card .mini-stat .mini-val { font-size: 1.3rem; font-weight: 700; color: #1a1a2e; }
+        .scan-card .mini-stat .mini-lbl { font-size: 0.72rem; color: #888; margin-top: 0.15rem; }
+        .scan-card .card-actions { display: flex; gap: 0.75rem; justify-content: center; padding-top: 1rem; border-top: 1px solid #eee; }
+        .scan-card .card-actions a, .scan-card .card-actions button { font-size: 0.85rem; padding: 0.5rem 1rem; }
+        .error-msg { text-align: center; padding: 1.5rem; background: #f8d7da; color: #721c24; border-radius: 8px; max-width: 600px; margin: 1.5rem auto 0; }
+        .recent-scans { max-width: 600px; margin: 2rem auto 0; }
+        .recent-scans h3 { font-size: 0.95rem; color: #666; margin-bottom: 0.75rem; }
+        .recent-list { display: flex; flex-direction: column; gap: 0.5rem; }
+        .recent-item {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 0.6rem 1rem; background: white; border-radius: 8px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.06); font-size: 0.85rem;
+        }
+        .recent-item .ri-id { font-family: monospace; font-weight: 600; color: #4472C4; }
+        .recent-item .ri-url { color: #666; flex: 1; margin: 0 1rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .recent-item .ri-status { font-size: 0.75rem; font-weight: 700; padding: 0.15rem 0.5rem; border-radius: 4px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <nav class="top-nav">
+            <a href="/" class="nav-home">Sitemap Checker</a>
+            <a href="/search" class="nav-link" style="background:rgba(255,255,255,0.1);color:white">Search Scan</a>
+        </nav>
+
+        <div class="search-hero">
+            <h1>Search Scan</h1>
+            <p>Enter a scan ID to view its detailed analysis</p>
+        </div>
+
+        <div class="search-form">
+            <form id="search-form">
+                <div class="input-row">
+                    <input type="text" id="scan-id-input" placeholder="e.g. a1b2c3d4e5f6" autocomplete="off" autofocus>
+                    <button type="submit" class="btn btn-primary" id="search-btn">Search</button>
+                </div>
+            </form>
+        </div>
+
+        <div id="search-error" class="error-msg hidden"></div>
+        <div id="search-result" class="search-result hidden"></div>
+
+        <div class="recent-scans" id="recent-scans"></div>
+    </div>
+
+    <script>
+        const searchForm = document.getElementById('search-form');
+        const searchInput = document.getElementById('scan-id-input');
+        const searchError = document.getElementById('search-error');
+        const searchResult = document.getElementById('search-result');
+        const recentScans = document.getElementById('recent-scans');
+
+        function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+        function fmtDuration(started, completed) {
+            if (!started) return '-';
+            const s = new Date(started);
+            const e = completed ? new Date(completed) : new Date();
+            const secs = Math.round((e - s) / 1000);
+            if (secs < 60) return secs + 's';
+            return Math.floor(secs / 60) + 'm ' + (secs % 60) + 's';
+        }
+
+        function renderScanCard(d) {
+            const statusClass = (d.status || '').toLowerCase();
+            return `
+                <div class="scan-card">
+                    <div class="scan-card-header">
+                        <h3>Scan Results</h3>
+                        <span class="status-badge ${statusClass}">${esc(d.status)}</span>
+                    </div>
+                    <div class="meta-row">
+                        <span><strong>ID:</strong> <code>${esc(d.scan_id)}</code></span>
+                        <span><strong>Sitemaps:</strong> ${(d.sitemaps || []).map(s => esc(s)).join(', ')}</span>
+                    </div>
+                    <div class="meta-row">
+                        <span><strong>Started:</strong> ${d.started_at || '-'}</span>
+                        <span><strong>Duration:</strong> ${fmtDuration(d.started_at, d.completed_at)}</span>
+                        ${d.error ? `<span style="color:#e74c3c"><strong>Error:</strong> ${esc(d.error)}</span>` : ''}
+                    </div>
+                    <div class="stats-mini">
+                        <div class="mini-stat"><div class="mini-val">${(d.total||0).toLocaleString()}</div><div class="mini-lbl">Total URLs</div></div>
+                        <div class="mini-stat"><div class="mini-val" style="color:#27ae60">${(d.success||0).toLocaleString()}</div><div class="mini-lbl">200 OK</div></div>
+                        <div class="mini-stat"><div class="mini-val" style="color:#e74c3c">${((d.client_errors||0)+(d.server_errors||0)).toLocaleString()}</div><div class="mini-lbl">Errors</div></div>
+                        <div class="mini-stat"><div class="mini-val" style="color:#e67e22">${((d.seo_issues||0)+(d.content_issues||0)).toLocaleString()}</div><div class="mini-lbl">Issues</div></div>
+                    </div>
+                    <div class="card-actions">
+                        <a href="/scan/${esc(d.scan_id)}/urls" target="_blank" class="btn btn-primary" style="width:auto">View URL Analytics</a>
+                        <a href="/scan/${esc(d.scan_id)}/issues" target="_blank" class="btn btn-secondary">Common Issues</a>
+                        <a href="/api/scan/${esc(d.scan_id)}/download" class="btn btn-secondary">Download Report</a>
+                    </div>
+                </div>`;
+        }
+
+        async function loadScan(scanId) {
+            searchError.classList.add('hidden');
+            searchResult.classList.add('hidden');
+            searchResult.innerHTML = '';
+
+            try {
+                const resp = await fetch(`/api/scan/${scanId}/status`);
+                if (resp.status === 404) throw new Error('Scan not found. Check the ID and try again.');
+                if (!resp.ok) throw new Error('Failed to fetch scan.');
+                const data = await resp.json();
+                searchResult.innerHTML = renderScanCard(data);
+                searchResult.classList.remove('hidden');
+            } catch (e) {
+                searchError.textContent = e.message;
+                searchError.classList.remove('hidden');
+            }
+        }
+
+        searchForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const id = searchInput.value.trim();
+            if (id) loadScan(id);
+        });
+
+        async function loadRecent() {
+            try {
+                const resp = await fetch('/api/search/recent-scans');
+                const scans = await resp.json();
+                if (!scans.length) return;
+                recentScans.innerHTML = `<h3>Recent Scans</h3><div class="recent-list">${
+                    scans.map(s => {
+                        const sc = (s.status || '').toLowerCase();
+                        return `<div class="recent-item" style="cursor:pointer" onclick="document.getElementById('scan-id-input').value='${esc(s.scan_id)}';loadScan('${esc(s.scan_id)}')">
+                            <span class="ri-id">${esc(s.scan_id)}</span>
+                            <span class="ri-url">${esc((s.sitemaps || [])[0] || '')}</span>
+                            <span class="ri-status status-badge ${sc}">${esc(s.status)}</span>
+                        </div>`;
+                    }).join('')
+                }</div>`;
+            } catch (e) {}
+        }
+
+        const hash = window.location.hash.slice(1);
+        if (hash) { searchInput.value = hash; loadScan(hash); }
+        loadRecent();
+    </script>
+</body>
+</html>

@@ -42,6 +42,7 @@ form.addEventListener('submit', async (e) => {
 
         currentScanId = data.scan_id;
         document.getElementById('partial-download-btn').href = `/api/scan/${currentScanId}/download-partial`;
+        document.getElementById('scan-id-display').textContent = currentScanId;
         showSection('progress');
         startPolling();
     } catch (err) {
@@ -178,6 +179,7 @@ function showResults(data) {
     document.getElementById('result-seo').textContent = data.seo_issues.toLocaleString();
     document.getElementById('result-content').textContent = data.content_issues.toLocaleString();
     document.getElementById('result-duration').textContent = formatTime(data.elapsed);
+    document.getElementById('result-scan-id').textContent = currentScanId;
 
     const dlBtn = document.getElementById('download-btn');
     dlBtn.href = `/api/scan/${currentScanId}/download`;

@@ -10,6 +10,16 @@ async def index(request: Request):
     return templates.TemplateResponse(request, "index.html")
 
 
+@router.get("/search")
+async def search_page(request: Request):
+    return templates.TemplateResponse(request, "search.html")
+
+
+@router.get("/scan/{scan_id}")
+async def scan_detail_page(request: Request, scan_id: str):
+    return templates.TemplateResponse(request, "scan_detail.html", {"scan_id": scan_id})
+
+
 @router.get("/scan/{scan_id}/urls")
 async def urls_page(request: Request, scan_id: str):
     return templates.TemplateResponse(request, "urls.html", {"scan_id": scan_id})

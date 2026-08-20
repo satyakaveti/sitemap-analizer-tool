@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Scan Detail - Sitemap Health Checker</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="/static/css/pages.css">
+    <style>
+        .detail-hero { margin-bottom: 1.5rem; }
+        .detail-hero h1 { font-size: 1.6rem; color: #1a1a2e; margin-bottom: 0.25rem; }
+        .detail-hero .scan-id-tag { font-family: monospace; font-size: 0.85rem; color: #666; }
+        .detail-hero .status-badge {
+            display: inline-block; padding: 0.2rem 0.75rem; border-radius: 20px;
+            font-size: 0.78rem; font-weight: 700; margin-left: 0.5rem;
+        }
+        .status-badge.running { background: #d1ecf1; color: #0c5460; }
+        .status-badge.completed { background: #d4edda; color: #155724; }
+        .status-badge.failed { background: #f8d7da; color: #721c24; }
+        .status-badge.queued { background: #fff3cd; color: #856404; }
+        .status-badge.cancelled { background: #e2e3e5; color: #383d41; }
+
+        .summary-banner {
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+            gap: 0.75rem; background: #f8f9fa; border-radius: 12px; padding: 1.25rem;
+            margin-bottom: 1.5rem;
+        }
+        .summary-banner .sb-item { text-align: center; }
+        .summary-banner .sb-val { font-size: 1.6rem; font-weight: 700; }
+        .summary-banner .sb-lbl { font-size: 0.75rem; color: #888; margin-top: 0.1rem; }
+        .sb-green .sb-val { color: #27ae60; }
+        .sb-yellow .sb-val { color: #f39c12; }
+        .sb-red .sb-val { color: #e74c3c; }
+        .sb-blue .sb-val { color: #4472C4; }
+        .sb-orange .sb-val { color: #e67e22; }
+
+        .section-card { background: white; border-radius: 10px; padding: 1.25rem; box-shadow: 0 1px 4px rgba(0,0,0,0.06); margin-bottom: 1.5rem; }
+        .section-card h2 { font-size: 1.05rem; color: #1a1a2e; margin-bottom: 1rem; border-bottom: 2px solid #4472C4; padding-bottom: 0.4rem; }
+        .detail-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+        .info-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+        .info-table td { padding: 0.4rem 0.5rem; border-bottom: 1px solid #f0f0f0; vertical-align: top; }
+        .info-table td:first-child { font-weight: 600; color: #666; white-space: nowrap; width: 150px; }
+        .info-table .mono { font-family: monospace; font-size: 0.8rem; word-break: break-all; }
+
+        .issue-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+        .issue-table th { background: #f1f3f5; padding: 0.5rem 0.75rem; text-align: left; font-weight: 600; color: #555; border-bottom: 2px solid #dee2e6; }
+        .issue-table td { padding: 0.5rem 0.75rem; border-bottom: 1px solid #f0f0f0; vertical-align: top; }
+        .issue-table tr:hover { background: #f8f9fa; }
+        .issue-table .cnt { font-weight: 700; text-align: center; color: #c0392b; }
+        .issue-table .samples { font-family: monospace; font-size: 0.72rem; color: #666; }
+        .issue-table .samples a { color: #4472C4; text-decoration: none; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 400px; }
+        .issue-table .samples a:hover { text-decoration: underline; }
+
+        .action-bar { display: flex; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 1.5rem; }
+        .action-bar a { font-size: 0.85rem; padding: 0.5rem 1rem; }
+
+        @media (max-width: 768px) { .detail-grid-2 { grid-template-columns: 1fr; } }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <nav class="top-nav">
+            <a href="/" target="_blank" class="nav-home">Sitemap Checker</a>
+            <a href="/search" target="_blank" class="nav-link">Search Scan</a>
+        </nav>
+
+        <div class="detail-hero" id="hero"></div>
+        <div class="action-bar" id="actions"></div>
+        <div class="summary-banner" id="summary-banner"></div>
+        <div class="detail-grid-2" id="info-grid"></div>
+        <div class="section-card" id="issues-section"><h2>Issues Summary</h2><div id="issues-body"><p style="color:#aaa;text-align:center;padding:1rem">Loading...</p></div></div>
+        <div class="section-card" id="seo-section"><h2>SEO Issues</h2><div id="seo-body"></div></div>
+        <div class="section-card" id="content-section"><h2>Content Issues</h2><div id="content-body"></div></div>
+        <div class="section-card" id="errors-section"><h2>Error Summary</h2><div id="errors-body"></div></div>
+
+        <div class="page-actions">
+            <a id="all-urls-btn" href="#" target="_blank" class="btn btn-primary" style="width:auto">View All URLs</a>
+            <a id="all-issues-btn" href="#" target="_blank" class="btn btn-secondary">View All Issues</a>
+        </div>
+    </div>
+
+    <script>
+        const SCAN_ID = '{{ scan_id }}';
+        function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+        function renderHero(d) {
+            const sc = (d.status||'').toLowerCase();
+            document.getElementById('hero').innerHTML = `
+                <h1>Scan Detail <span class="status-badge ${sc}">${esc(d.status)}</span></h1>
+                <div class="scan-id-tag">ID: <code>${esc(d.scan_id)}</code> <button class="btn-copy" onclick="navigator.clipboard.writeText('${esc(d.scan_id)}')">Copy</button></div>`;
+        }
+
+        function renderActions(d) {
+            const dl = d.status === 'COMPLETED' || d.status === 'RUNNING';
+            document.getElementById('actions').innerHTML = `
+                ${dl ? `<a href="/api/scan/${SCAN_ID}/download${d.status==='RUNNING'?'-partial':''}" class="btn btn-primary" style="width:auto" download>Download Excel Report</a>` : ''}
+                <a href="/scan/${SCAN_ID}/urls" target="_blank" class="btn btn-secondary">URL Analytics</a>
+                <a href="/scan/${SCAN_ID}/issues" target="_blank" class="btn btn-secondary">Common Issues</a>`;
+            document.getElementById('all-urls-btn').href = `/scan/${SCAN_ID}/urls`;
+            document.getElementById('all-issues-btn').href = `/scan/${SCAN_ID}/issues`;
+        }
+
+        function renderBanner(d) {
+            document.getElementById('summary-banner').innerHTML = `
+                <div class="sb-item sb-blue"><div class="sb-val">${(d.total||0).toLocaleString()}</div><div class="sb-lbl">Total URLs</div></div>
+                <div class="sb-item"><div class="sb-val">${(d.completed||0).toLocaleString()}</div><div class="sb-lbl">Completed</div></div>
+                <div class="sb-item sb-green"><div class="sb-val">${(d.success||0).toLocaleString()}</div><div class="sb-lbl">200 OK</div></div>
+                <div class="sb-item sb-yellow"><div class="sb-val">${(d.redirects||0).toLocaleString()}</div><div class="sb-lbl">Redirects</div></div>
+                <div class="sb-item sb-red"><div class="sb-val">${(d.client_errors||0).toLocaleString()}</div><div class="sb-lbl">4xx</div></div>
+                <div class="sb-item sb-red"><div class="sb-val">${(d.server_errors||0).toLocaleString()}</div><div class="sb-lbl">5xx</div></div>
+                <div class="sb-item sb-orange"><div class="sb-val">${(d.seo_issues||0).toLocaleString()}</div><div class="sb-lbl">SEO Issues</div></div>
+                <div class="sb-item sb-orange"><div class="sb-val">${(d.content_issues||0).toLocaleString()}</div><div class="sb-lbl">Content Issues</div></div>`;
+        }
+
+        function renderInfo(d) {
+            document.getElementById('info-grid').innerHTML = `
+                <div class="section-card"><h2>Scan Information</h2><table class="info-table">
+                    <tr><td>Status</td><td><span class="status-badge ${(d.status||'').toLowerCase()}">${esc(d.status)}</span></td></tr>
+                    <tr><td>Phase</td><td>${esc(d.phase||'-')}</td></tr>
+                    <tr><td>Started</td><td>${esc(d.started_at||'-')}</td></tr>
+                    <tr><td>Completed</td><td>${esc(d.completed_at||'-')}</td></tr>
+                    <tr><td>Duration</td><td>${esc(d.elapsed ? d.elapsed+'s' : '-')}</td></tr>
+                    <tr><td>Error</td><td style="color:#e74c3c">${esc(d.error||'None')}</td></tr>
+                </table></div>
+                <div class="section-card"><h2>Sitemaps</h2><table class="info-table">
+                    ${(d.sitemaps||[]).map(s => `<tr><td>URL</td><td class="mono">${esc(s)}</td></tr>`).join('')}
+                    <tr><td>Timeouts</td><td>${(d.timeouts||0)}</td></tr>
+                    <tr><td>DNS Errors</td><td>${(d.dns_errors||0)}</td></tr>
+                    <tr><td>SSL Errors</td><td>${(d.ssl_errors||0)}</td></tr>
+                    <tr><td>Other Errors</td><td>${(d.other_errors||0)}</td></tr>
+                </table></div>`;
+        }
+
+        function renderTable(containerId, data, columns) {
+            if (!data || !data.length) { document.getElementById(containerId).innerHTML = '<p style="color:#aaa;padding:1rem;text-align:center">No data</p>'; return; }
+            let html = '<table class="issue-table"><thead><tr>';
+            columns.forEach(c => html += `<th>${esc(c.label)}</th>`);
+            html += '</tr></thead><tbody>';
+            data.forEach(row => {
+                html += '<tr>';
+                columns.forEach(c => {
+                    const val = c.render ? c.render(row) : esc(String(row[c.key]||''));
+                    html += `<td>${val}</td>`;
+                });
+                html += '</tr>';
+            });
+            html += '</tbody></table>';
+            document.getElementById(containerId).innerHTML = html;
+        }
+
+        async function init() {
+            try {
+                const [statusResp, summaryResp, issuesResp] = await Promise.all([
+                    fetch(`/api/scan/${SCAN_ID}/status`),
+                    fetch(`/api/scan/${SCAN_ID}/summary`),
+                    fetch(`/api/scan/${SCAN_ID}/issues`),
+                ]);
+
+                if (!statusResp.ok) { document.getElementById('hero').innerHTML = '<h1 style="color:#e74c3c">Scan not found</h1>'; return; }
+                const d = await statusResp.json();
+                const s = await summaryResp.json();
+                const issues = await issuesResp.json();
+
+                renderHero(d); renderActions(d); renderBanner(d); renderInfo(d);
+
+                renderTable('issues-body', issues, [
+                    { label: 'Issue', key: 'issue', render: r => `<strong>${esc(r.issue)}</strong>` },
+                    { label: 'Count', key: 'count', render: r => `<span class="cnt">${r.count}</span>` },
+                    { label: 'Sample URLs', key: 'sample_urls', render: r => `<div class="samples">${(r.sample_urls||[]).map(u => `<a href="/scan/${SCAN_ID}/url/${encodeURIComponent(u)}" target="_blank">${esc(u)}</a>`).join('')}</div>` },
+                ]);
+
+                renderTable('seo-body', s.seo_summary, [
+                    { label: 'SEO Issue', key: 'issue', render: r => esc(r.issue) },
+                    { label: 'Affected URLs', key: 'count', render: r => `<span class="cnt">${r.count}</span>` },
+                ]);
+
+                renderTable('content-body', s.content_summary, [
+                    { label: 'Content Issue', key: 'issue', render: r => esc(r.issue) },
+                    { label: 'Affected URLs', key: 'count', render: r => `<span class="cnt">${r.count}</span>` },
+                ]);
+
+                renderTable('errors-body', s.error_summary, [
+                    { label: 'Error', key: 'error_type', render: r => `<strong>${esc(r.error_type)}</strong>` },
+                    { label: 'Count', key: 'count', render: r => `<span class="cnt">${r.count}</span>` },
+                    { label: 'Sample URLs', key: 'sample_urls', render: r => `<div class="samples">${(r.sample_urls||[]).map(u => `<a href="/scan/${SCAN_ID}/url/${encodeURIComponent(u)}" target="_blank">${esc(u)}</a>`).join('')}</div>` },
+                ]);
+            } catch (e) {
+                document.getElementById('hero').innerHTML = `<h1 style="color:#e74c3c">Error: ${esc(e.message)}</h1>`;
+            }
+        }
+        init();
+    </script>
+</body>
+</html>

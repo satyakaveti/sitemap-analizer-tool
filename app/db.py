@@ -401,3 +401,19 @@ def get_paginated_results(scan_id: str, offset: int = 0, limit: int = 50,
         results.append(d)
 
     return results, total
+
+
+def get_recent_scans(limit: int = 10) -> list[dict]:
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT scan_id, status, sitemaps, total_urls, completed, success, redirects, "
+        "client_errors, server_errors, seo_issues, content_issues, started_at, completed_at, error "
+        "FROM scans ORDER BY started_at DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    results = []
+    for row in rows:
+        d = dict(row)
+        d["sitemaps"] = json.loads(d["sitemaps"])
+        results.append(d)
+    return results

@@ -37,6 +37,74 @@ header h1 {
     display: none !important;
 }
 
+.top-nav {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem 1.25rem;
+    background: #1a1a2e;
+    border-radius: 10px;
+    margin-bottom: 1.5rem;
+}
+
+.top-nav .nav-home {
+    color: white;
+    font-weight: 700;
+    font-size: 1rem;
+    text-decoration: none;
+}
+
+.top-nav .nav-link {
+    color: #aab;
+    font-weight: 500;
+    font-size: 0.85rem;
+    text-decoration: none;
+    padding: 0.35rem 0.75rem;
+    border-radius: 6px;
+    transition: all 0.2s;
+}
+
+.top-nav .nav-link:hover {
+    background: rgba(255,255,255,0.1);
+    color: white;
+}
+
+.scan-id-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+    font-size: 0.85rem;
+    color: #666;
+}
+
+.scan-id-bar code {
+    background: #f1f3f5;
+    padding: 0.25rem 0.6rem;
+    border-radius: 4px;
+    font-family: 'SF Mono', SFMono-Regular, Consolas, monospace;
+    font-size: 0.82rem;
+    color: #333;
+    user-select: all;
+}
+
+.btn-copy {
+    padding: 0.2rem 0.5rem;
+    border: 1px solid #dee2e6;
+    background: white;
+    border-radius: 4px;
+    font-size: 0.72rem;
+    cursor: pointer;
+    color: #666;
+    transition: all 0.15s;
+}
+
+.btn-copy:hover {
+    background: #4472C4;
+    color: white;
+    border-color: #4472C4;
+}
+
 form {
     background: white;
     padding: 2rem;

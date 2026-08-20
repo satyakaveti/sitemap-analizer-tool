@@ -92,3 +92,8 @@ async def scan_issues(scan_id: str):
     if not status:
         raise HTTPException(status_code=404, detail="Scan not found")
     return db.get_all_issues_grouped(scan_id)
+
+
+@router.get("/search/recent-scans")
+async def recent_scans():
+    return db.get_recent_scans(limit=10)
