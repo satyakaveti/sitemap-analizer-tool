@@ -30,7 +30,7 @@ LONG_TITLE_THRESHOLD = 60
 SHORT_TITLE_THRESHOLD = 10
 LONG_META_DESC_THRESHOLD = 160
 
-USER_AGENT = "SitemapHealthChecker/1.0 (+https://your-domain.example)"
+USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
 ALLOWED_SCHEMES = {"http", "https"}
 REJECTED_SCHEMES = {"javascript", "mailto", "data", "ftp", "file"}

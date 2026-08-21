@@ -55,10 +55,6 @@ class AsyncCrawler:
                 logger.info(f"[scan={self.scan_id}] Starting crawl batch from index {i} with {len(batch)} URLs")
                 tasks = []
                 for url in batch:
-                    db_status = db.get_status(self.scan_id)
-                    if db_status and db_status["is_cancelled"]:
-                        logger.info(f"[scan={self.scan_id}] Crawler cancelled during batch creation")
-                        break
                     tasks.append(self._check_one(url, checker, link_checker, robots_info, scan_domain))
 
                 if tasks:
