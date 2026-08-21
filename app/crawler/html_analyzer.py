@@ -1,4 +1,5 @@
 import logging
+import re
 from urllib.parse import urlparse
 
 from bs4 import BeautifulSoup
@@ -40,13 +41,29 @@ def analyze_html(html_content: bytes, url: str, page_domain: str = "", short_sca
     }
     try:
         text = html_content[:MAX_HTML_PARSE_SIZE].decode("utf-8", errors="ignore")
-        soup = BeautifulSoup(text, "html.parser")
 
         if short_scan:
-            result.update(_analyze_title(soup))
-            result["word_count"] = _count_meaningful_words(soup)
-            result["issues"] = _check_content(result, text)
+            # Bypass BeautifulSoup entirely using fast regex and string splitting
+            title_match = re.search(r"<title[^>]*>(.*?)</title>", text, re.IGNORECASE | re.DOTALL)
+            title = title_match.group(1).strip() if title_match else ""
+            result["title"] = title
+            result["title_length"] = len(title)
+            
+            # Simple text length and fast word count estimation
+            # Remove inline tags content to estimate meaningful words
+            clean_text = re.sub(r"<(script|style|nav|header|footer|noscript)[^>]*>.*?</\1>", "", text, flags=re.IGNORECASE | re.DOTALL)
+            clean_text = re.sub(r"<[^>]+>", " ", clean_text)
+            words = clean_text.split()
+            result["word_count"] = len(words)
+            
+            wc = result["word_count"]
+            if wc > 0 and wc < VERY_THIN_CONTENT_THRESHOLD:
+                result["issues"].append(make_issue("CONTENT_VERY_THIN", f"Only {wc} meaningful words"))
+            elif wc >= VERY_THIN_CONTENT_THRESHOLD and wc < THIN_CONTENT_THRESHOLD:
+                result["issues"].append(make_issue("CONTENT_THIN", f"{wc} meaningful words"))
             return result
+
+        soup = BeautifulSoup(text, "html.parser")
 
         result.update(_analyze_title(soup))
         result.update(_analyze_meta_description(soup))
