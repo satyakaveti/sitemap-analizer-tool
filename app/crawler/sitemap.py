@@ -122,6 +122,7 @@ async def extract_all_urls(
     scan_id: str, sitemap_urls: list[str], max_depth: int = 5
 ) -> list[str]:
     from app import db
+    import asyncio
 
     all_urls: set[str] = set()
     visited_sitemaps: set[str] = set()
@@ -137,20 +138,31 @@ async def extract_all_urls(
             nonlocal cancelled
             if cancelled or depth > max_depth or url in visited_sitemaps:
                 return
-            if depth > 0:
-                s = db.get_status(scan_id)
-                if s and s["is_cancelled"]:
-                    cancelled = True
-                    return
-            visited_sitemaps.add(url)
+            
+            s = db.get_status(scan_id)
+            if s and s["is_cancelled"]:
+                cancelled = True
+                return
 
+            visited_sitemaps.add(url)
             logger.info(f"[scan={scan_id}] Processing sitemap: {url} (depth={depth})")
+            
+            # Update database status so the user sees progress and current sitemap in the UI
+            db.update_scan(
+                scan_id, 
+                phase=f"Fetching sitemaps ({len(all_urls)} URLs found)", 
+                current_url=url[:200]
+            )
 
             if not _is_sitemap_url(url):
                 normalized = normalize_url(url)
                 if normalized and is_valid_url(normalized):
                     all_urls.add(normalized)
                     logger.info(f"[scan={scan_id}] Added page URL ({len(all_urls)} total): {normalized[:100]}")
+                    db.update_scan(
+                        scan_id, 
+                        phase=f"Fetching sitemaps ({len(all_urls)} URLs found)"
+                    )
                 return
 
             try:
@@ -172,9 +184,12 @@ async def extract_all_urls(
             if is_sitemap_index(root):
                 child_urls = parse_sitemap_index(root)
                 logger.info(f"[scan={scan_id}] Sitemap index has {len(child_urls)} children")
+                tasks = []
                 for child in child_urls:
                     child_resolved = resolve_sitemap_url(url, child)
-                    await _process(child_resolved, depth + 1)
+                    tasks.append(_process(child_resolved, depth + 1))
+                if tasks:
+                    await asyncio.gather(*tasks)
             else:
                 found = parse_urlset(root)
                 logger.info(f"[scan={scan_id}] URL set has {len(found)} URLs")
@@ -182,9 +197,18 @@ async def extract_all_urls(
                     normalized = normalize_url(u)
                     if normalized and is_valid_url(normalized):
                         all_urls.add(normalized)
+                
+                db.update_scan(
+                    scan_id, 
+                    phase=f"Fetching sitemaps ({len(all_urls)} URLs found)"
+                )
 
+        tasks = []
         for surl in sitemap_urls:
-            await _process(surl)
+            tasks.append(_process(surl))
+        if tasks:
+            await asyncio.gather(*tasks)
 
     logger.info(f"[scan={scan_id}] Extracted {len(all_urls)} URLs from sitemaps")
     return list(all_urls)
+
