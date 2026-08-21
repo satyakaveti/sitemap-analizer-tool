@@ -8,6 +8,12 @@ from app.config import REPORTS_DIR, REPORT_RETENTION_HOURS
 from app.routes import pages, scan, reports
 from app import db
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    force=True
+)
+
 logger = logging.getLogger(__name__)
 
 
