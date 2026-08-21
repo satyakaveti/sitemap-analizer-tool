@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from app.config import REPORTS_DIR, REPORT_RETENTION_HOURS
-from app.routes import pages, scan, reports
+from app.routes import pages, scan, reports, ultra_scan
 from app import db
 
 logging.basicConfig(
@@ -41,3 +41,4 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 app.include_router(pages.router)
 app.include_router(scan.router, prefix="/api")
 app.include_router(reports.router, prefix="/api")
+app.include_router(ultra_scan.router, prefix="/api")

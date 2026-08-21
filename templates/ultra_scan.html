@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sitemap Health Checker</title>
+    <title>Ultra Sitemap Scan</title>
     <link rel="stylesheet" href="/static/css/style.css">
 </head>
 <body>
@@ -15,8 +15,8 @@
             <a href="/search" class="nav-link">Search Scan</a>
         </nav>
         <header>
-            <h1>Sitemap & URL Health Checker</h1>
-            <p class="subtitle">Scan sitemaps for HTTP errors, SEO issues, and content problems</p>
+            <h1>Ultra Sitemap Scan</h1>
+            <p class="subtitle">100% In-Memory Scan. Bypasses database entirely, streaming results in real-time.</p>
         </header>
 
         <main>
@@ -38,24 +38,23 @@
                         <div class="form-group">
                             <label for="concurrency">Concurrent Requests</label>
                             <select id="concurrency" name="concurrency">
-                                <option value="2">2 (gentle)</option>
                                 <option value="5">5</option>
-                                <option value="10" selected>10 (default/max)</option>
+                                <option value="10">10</option>
+                                <option value="25">25</option>
+                                <option value="50" selected>50 (fast)</option>
+                                <option value="100">100 (ultra)</option>
                             </select>
                         </div>
                     </div>
 
                     <button type="submit" id="start-btn" class="btn btn-primary">
-                        Start Scan
+                        Start Ultra Scan
                     </button>
                 </form>
             </section>
 
             <section id="progress-section" class="hidden">
-                <h2>Scanning...</h2>
-                <div class="scan-id-bar">Scan ID: <code id="scan-id-display">-</code>
-                    <button class="btn-copy" onclick="navigator.clipboard.writeText(document.getElementById('scan-id-display').textContent)">Copy</button>
-                </div>
+                <h2 id="progress-phase">Initializing...</h2>
                 <div class="progress-bar-container">
                     <div class="progress-bar" id="progress-bar">
                         <span id="progress-text">0%</span>
@@ -91,20 +90,10 @@
 
                 <div class="time-info">
                     <span>Elapsed: <strong id="stat-elapsed">0s</strong></span>
-                    <span>Est. Remaining: <strong id="stat-eta">calculating...</strong></span>
-                </div>
-
-                <div class="current-url-bar">
-                    <span class="current-url-label">Now scanning:</span>
-                    <span class="current-url" id="current-url">-</span>
-                </div>
-
-                <div class="progress-actions">
-                    <a id="partial-download-btn" class="btn btn-secondary btn-sm" href="#">Download Report So Far</a>
                 </div>
 
                 <div class="live-table-wrap">
-                    <h3>Recent Results</h3>
+                    <h3>Real-time Results (Direct Stream)</h3>
                     <table class="live-table" id="live-table">
                         <thead>
                             <tr>
@@ -119,19 +108,14 @@
                             </tr>
                         </thead>
                         <tbody id="live-table-body">
-                            <tr><td colspan="8" class="table-empty">Waiting for first results...</td></tr>
+                            <tr><td colspan="8" class="table-empty">Waiting for streamed chunks...</td></tr>
                         </tbody>
                     </table>
                 </div>
-
-                <button id="cancel-btn" class="btn btn-danger">Cancel Scan</button>
             </section>
 
             <section id="results-section" class="hidden">
-                <h2>Scan Complete</h2>
-                <div class="scan-id-bar">Scan ID: <code id="result-scan-id">-</code>
-                    <button class="btn-copy" onclick="navigator.clipboard.writeText(document.getElementById('result-scan-id').textContent)">Copy</button>
-                </div>
+                <h2>Scan Complete (In-Memory)</h2>
 
                 <div class="summary-card">
                     <div class="summary-header">
@@ -163,21 +147,12 @@
                     </div>
 
                     <div class="issue-summary">
-                        <div>SEO Issues: <strong id="result-seo">0</strong></div>
-                        <div>Content Issues: <strong id="result-content">0</strong></div>
                         <div>Duration: <strong id="result-duration">0s</strong></div>
                     </div>
                 </div>
 
-                <div id="summary-cards"></div>
-
-                <div class="nav-links">
-                    <a id="urls-link" class="nav-btn" href="#" target="_blank">URL Analytics</a>
-                    <a id="issues-link" class="nav-btn" href="#" target="_blank">Common Issues</a>
-                </div>
-
                 <div class="actions">
-                    <a id="download-btn" class="btn btn-primary" href="#" download>
+                    <a id="download-btn" class="btn btn-primary" href="#">
                         Download Excel Report
                     </a>
                     <button id="new-scan-btn" class="btn btn-secondary">New Scan</button>
@@ -194,6 +169,6 @@
         </main>
     </div>
 
-    <script src="/static/js/app.js"></script>
+    <script src="/static/js/ultra_scan.js"></script>
 </body>
 </html>
