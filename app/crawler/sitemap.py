@@ -102,14 +102,15 @@ def parse_sitemap_index(root: etree._Element) -> list[str]:
 
 
 def is_sitemap_index(root: etree._Element) -> bool:
-    if root.tag == f"{{{SITEMAP_NS}}}sitemapindex":
-        return True
-    if root.tag == "sitemapindex":
+    local_tag = root.tag.split("}")[-1] if "}" in root.tag else root.tag
+    if local_tag == "sitemapindex":
         return True
     for child in root:
-        if "sitemap" in child.tag.lower():
+        child_local = child.tag.split("}")[-1] if "}" in child.tag else child.tag
+        if child_local == "sitemap":
             return True
     return False
+
 
 
 def _is_sitemap_url(url: str) -> bool:
