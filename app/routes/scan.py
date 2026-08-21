@@ -24,8 +24,22 @@ class ScanRequest(BaseModel):
 async def start_scan(req: ScanRequest):
     scan_id = uuid.uuid4().hex[:12]
     db.create_scan(scan_id, req.sitemaps)
-    asyncio.create_task(_run_scan(scan_id, req.sitemaps))
+    task = asyncio.create_task(_run_scan(scan_id, req.sitemaps))
+    task.add_done_callback(lambda t: _task_done(scan_id, t))
     return {"scan_id": scan_id, "status": "QUEUED"}
+
+
+def _task_done(scan_id: str, task: asyncio.Task):
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc:
+        logger.error(f"scan={scan_id} background task crashed: {exc}", exc_info=exc)
+        try:
+            db.update_scan(scan_id, status="FAILED", error=str(exc),
+                          completed_at=datetime.utcnow().isoformat())
+        except Exception:
+            pass
 
 
 @router.get("/scan/{scan_id}/status")

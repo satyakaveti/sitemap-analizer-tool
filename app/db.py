@@ -1,4 +1,5 @@
 import json
+import logging
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -6,12 +7,15 @@ from typing import Optional
 
 from app.config import TURSO_URL, TURSO_TOKEN
 
-_local = threading.local()
+logger = logging.getLogger(__name__)
 
+_local = threading.local()
 USE_TURSO = bool(TURSO_URL and TURSO_TOKEN)
+_schema_ready = False
 
 
 def _get_conn():
+    global _schema_ready
     if not hasattr(_local, "conn") or _local.conn is None:
         if USE_TURSO:
             import libsql_experimental as libsql
@@ -27,44 +31,28 @@ def _get_conn():
             _local.conn.execute("PRAGMA journal_mode=WAL")
             _local.conn.execute("PRAGMA synchronous=NORMAL")
 
-        _local.conn.row_factory = _make_row_factory
+    if not _schema_ready:
         _init_schema(_local.conn)
+        _schema_ready = True
 
     return _local.conn
 
 
-class _Row:
-    """Lightweight row wrapper that supports dict(row) and row[key]."""
-    __slots__ = ("_columns", "_values")
-
-    def __init__(self, columns: list[str], values: tuple):
-        object.__setattr__(self, "_columns", columns)
-        object.__setattr__(self, "_values", values)
-
-    def __getitem__(self, key):
-        if isinstance(key, int):
-            return self._values[key]
-        idx = self._columns.index(key)
-        return self._values[idx]
-
-    def __contains__(self, key):
-        return key in self._columns
-
-    def __iter__(self):
-        return iter(self._columns)
-
-    def keys(self):
-        return self._columns
+def _row_to_dict(row) -> Optional[dict]:
+    if row is None:
+        return None
+    if hasattr(row, "keys"):
+        return {col: row[col] for col in row.keys()}
+    return None
 
 
-def _make_row_factory(cursor, row):
-    cols = [d[0] for d in cursor.description] if cursor.description else []
-    return _Row(cols, row)
+def _rows_to_dicts(rows) -> list[dict]:
+    return [_row_to_dict(r) for r in rows]
 
 
 def _init_schema(conn):
-    conn.executescript("""
-        CREATE TABLE IF NOT EXISTS scans (
+    stmts = [
+        """CREATE TABLE IF NOT EXISTS scans (
             scan_id TEXT PRIMARY KEY,
             status TEXT DEFAULT 'QUEUED',
             phase TEXT DEFAULT '',
@@ -87,9 +75,8 @@ def _init_schema(conn):
             error TEXT DEFAULT '',
             report_path TEXT DEFAULT '',
             is_cancelled INTEGER DEFAULT 0
-        );
-
-        CREATE TABLE IF NOT EXISTS url_results (
+        )""",
+        """CREATE TABLE IF NOT EXISTS url_results (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             scan_id TEXT NOT NULL,
             url TEXT,
@@ -112,9 +99,8 @@ def _init_schema(conn):
             indexable INTEGER DEFAULT 1,
             error TEXT DEFAULT '',
             issues TEXT DEFAULT '[]'
-        );
-
-        CREATE TABLE IF NOT EXISTS recent_results (
+        )""",
+        """CREATE TABLE IF NOT EXISTS recent_results (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             scan_id TEXT NOT NULL,
             url TEXT,
@@ -124,17 +110,16 @@ def _init_schema(conn):
             title TEXT,
             words TEXT,
             issues INTEGER DEFAULT 0
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_results_scan ON url_results(scan_id);
-        CREATE INDEX IF NOT EXISTS idx_recent_scan ON recent_results(scan_id);
-    """)
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_results_scan ON url_results(scan_id)",
+        "CREATE INDEX IF NOT EXISTS idx_recent_scan ON recent_results(scan_id)",
+    ]
+    for stmt in stmts:
+        try:
+            conn.execute(stmt)
+        except Exception as e:
+            logger.warning(f"Schema statement failed: {e}")
     conn.commit()
-
-
-def _all(sql: str, params: tuple = ()):
-    conn = _get_conn()
-    return conn.execute(sql, params).fetchall()
 
 
 def init_db():
@@ -146,7 +131,7 @@ def cleanup_old_scans(hours: int = 24):
     cutoff = (datetime.utcnow() - timedelta(hours=hours)).isoformat()
     old = conn.execute("SELECT scan_id FROM scans WHERE completed_at < ? OR completed_at IS NULL", (cutoff,)).fetchall()
     for row in old:
-        sid = row["scan_id"]
+        sid = row[0] if isinstance(row, tuple) else row["scan_id"]
         conn.execute("DELETE FROM url_results WHERE scan_id = ?", (sid,))
         conn.execute("DELETE FROM recent_results WHERE scan_id = ?", (sid,))
     conn.execute("DELETE FROM scans WHERE completed_at < ? OR (completed_at IS NULL AND started_at < ?)", (cutoff, cutoff))
@@ -218,23 +203,31 @@ def update_recent(scan_id: str, entry: dict):
     conn.commit()
 
 
-def _row_to_dict(row) -> Optional[dict]:
-    if row is None:
-        return None
-    return {col: row[col] for col in row.keys()}
+def _fetch(sql: str, params: tuple = ()) -> list[dict]:
+    conn = _get_conn()
+    rows = conn.execute(sql, params).fetchall()
+    result = []
+    for row in rows:
+        if hasattr(row, "keys"):
+            result.append({col: row[col] for col in row.keys()})
+        elif isinstance(row, tuple):
+            result.append(row)
+        else:
+            result.append(row)
+    return result
 
 
-def _rows_to_dicts(rows) -> list[dict]:
-    return [{col: r[col] for col in r.keys()} for r in rows]
+def _fetch_one(sql: str, params: tuple = ()) -> Optional[dict]:
+    rows = _fetch(sql, params)
+    return rows[0] if rows else None
 
 
 def get_status(scan_id: str) -> Optional[dict]:
-    row = _all("SELECT * FROM scans WHERE scan_id = ?", (scan_id,))
-    if not row:
+    d = _fetch_one("SELECT * FROM scans WHERE scan_id = ?", (scan_id,))
+    if not d:
         return None
 
-    d = _row_to_dict(row[0])
-    d["sitemaps"] = json.loads(d["sitemaps"])
+    d["sitemaps"] = json.loads(d["sitemaps"]) if isinstance(d["sitemaps"], str) else d["sitemaps"]
     d["total"] = d["total_urls"]
     d["percentage"] = round((d["completed"] / d["total_urls"] * 100), 2) if d["total_urls"] > 0 else 0
 
@@ -251,29 +244,26 @@ def get_status(scan_id: str) -> Optional[dict]:
         remaining = d["total_urls"] - d["completed"]
         d["eta"] = round(remaining / rate, 1) if rate > 0 else None
 
-    recent = _all(
+    recent = _fetch(
         "SELECT url, status, time, size, title, words, issues FROM recent_results WHERE scan_id = ? ORDER BY id DESC",
         (scan_id,),
     )
-    d["recent_results"] = _rows_to_dicts(recent)
+    d["recent_results"] = recent
 
     return d
 
 
 def get_results(scan_id: str) -> list[dict]:
-    rows = _all("SELECT * FROM url_results WHERE scan_id = ?", (scan_id,))
-    results = []
-    for r in rows:
-        d = _row_to_dict(r)
-        d["issues"] = json.loads(d["issues"])
-        d["redirect_chain"] = json.loads(d["redirect_chain"])
+    rows = _fetch("SELECT * FROM url_results WHERE scan_id = ?", (scan_id,))
+    for d in rows:
+        d["issues"] = json.loads(d["issues"]) if isinstance(d["issues"], str) else d.get("issues", [])
+        d["redirect_chain"] = json.loads(d["redirect_chain"]) if isinstance(d["redirect_chain"], str) else d.get("redirect_chain", [])
         d["indexable"] = bool(d["indexable"])
-        results.append(d)
-    return results
+    return rows
 
 
 def get_error_summary(scan_id: str) -> list[dict]:
-    rows = _all("""
+    rows = _fetch("""
         SELECT
             CASE
                 WHEN error != '' THEN error
@@ -291,9 +281,8 @@ def get_error_summary(scan_id: str) -> list[dict]:
     """, (scan_id,))
 
     summaries = []
-    for row in rows:
-        rd = _row_to_dict(row)
-        urls = rd["urls"].split("||") if rd["urls"] else []
+    for rd in rows:
+        urls = rd["urls"].split("||") if rd.get("urls") else []
         summaries.append({
             "error_type": rd["error_type"],
             "count": rd["count"],
@@ -304,7 +293,6 @@ def get_error_summary(scan_id: str) -> list[dict]:
 
 def get_seo_summary(scan_id: str) -> list[dict]:
     summaries = []
-
     for label, condition in [
         ("Missing title", "title = '' OR title IS NULL"),
         ("Missing meta description", "meta_description = '' OR meta_description IS NULL"),
@@ -313,37 +301,34 @@ def get_seo_summary(scan_id: str) -> list[dict]:
         ("Missing canonical", "canonical = '' OR canonical IS NULL"),
         ("Noindex directive", "robots LIKE '%noindex%'"),
     ]:
-        rows = _all(
+        rows = _fetch(
             f"SELECT COUNT(*) as c FROM url_results WHERE scan_id = ? AND {condition}", (scan_id,)
         )
-        count = _row_to_dict(rows[0])["c"] if rows else 0
+        count = rows[0]["c"] if rows else 0
         if count > 0:
             summaries.append({"issue": label, "count": count})
-
     return summaries
 
 
 def get_content_summary(scan_id: str) -> list[dict]:
     summaries = []
-
     for label, condition in [
         ("Very thin content (<50 words)", "word_count < 50 AND word_count > 0"),
         ("Thin content (<100 words)", "word_count >= 50 AND word_count < 100"),
         ("Possible soft 404", "issues LIKE '%soft 404%'"),
         ("Possible application error", "issues LIKE '%application error%'"),
     ]:
-        rows = _all(
+        rows = _fetch(
             f"SELECT COUNT(*) as c FROM url_results WHERE scan_id = ? AND {condition}", (scan_id,)
         )
-        count = _row_to_dict(rows[0])["c"] if rows else 0
+        count = rows[0]["c"] if rows else 0
         if count > 0:
             summaries.append({"issue": label, "count": count})
-
     return summaries
 
 
 def count_by_status(scan_id: str) -> dict:
-    rows = _all("""
+    rows = _fetch("""
         SELECT
             CASE
                 WHEN status_code IS NULL AND error != '' THEN 'error'
@@ -357,16 +342,15 @@ def count_by_status(scan_id: str) -> dict:
         FROM url_results WHERE scan_id = ?
         GROUP BY category
     """, (scan_id,))
-    return {_row_to_dict(r)["category"]: _row_to_dict(r)["count"] for r in rows}
+    return {r["category"]: r["count"] for r in rows}
 
 
 def get_all_issues_grouped(scan_id: str) -> list[dict]:
-    rows = _all("SELECT issues, url FROM url_results WHERE scan_id = ?", (scan_id,))
+    rows = _fetch("SELECT issues, url FROM url_results WHERE scan_id = ?", (scan_id,))
 
     issue_map: dict[str, dict] = {}
-    for row in rows:
-        rd = _row_to_dict(row)
-        issues = json.loads(rd["issues"]) if rd["issues"] else []
+    for rd in rows:
+        issues = json.loads(rd["issues"]) if isinstance(rd["issues"], str) else rd.get("issues", [])
         url = rd["url"]
         for issue in issues:
             issue = issue.strip()
@@ -378,34 +362,27 @@ def get_all_issues_grouped(scan_id: str) -> list[dict]:
             if len(issue_map[issue]["sample_urls"]) < 5:
                 issue_map[issue]["sample_urls"].append(url)
 
-    result = sorted(issue_map.values(), key=lambda x: x["count"], reverse=True)
-    return result
+    return sorted(issue_map.values(), key=lambda x: x["count"], reverse=True)
 
 
 def get_url_detail(scan_id: str, url: str) -> Optional[dict]:
-    rows = _all(
-        "SELECT * FROM url_results WHERE scan_id = ? AND url = ?",
-        (scan_id, url),
-    )
+    rows = _fetch("SELECT * FROM url_results WHERE scan_id = ? AND url = ?", (scan_id, url))
     if not rows:
         return None
-    d = _row_to_dict(rows[0])
-    d["issues"] = json.loads(d["issues"]) if d["issues"] else []
-    d["redirect_chain"] = json.loads(d["redirect_chain"]) if d["redirect_chain"] else []
+    d = rows[0]
+    d["issues"] = json.loads(d["issues"]) if isinstance(d["issues"], str) else d.get("issues", [])
+    d["redirect_chain"] = json.loads(d["redirect_chain"]) if isinstance(d["redirect_chain"], str) else d.get("redirect_chain", [])
     d["indexable"] = bool(d["indexable"])
     return d
 
 
 def get_url_detail_by_id(scan_id: str, result_id: int) -> Optional[dict]:
-    rows = _all(
-        "SELECT * FROM url_results WHERE scan_id = ? AND id = ?",
-        (scan_id, result_id),
-    )
+    rows = _fetch("SELECT * FROM url_results WHERE scan_id = ? AND id = ?", (scan_id, result_id))
     if not rows:
         return None
-    d = _row_to_dict(rows[0])
-    d["issues"] = json.loads(d["issues"]) if d["issues"] else []
-    d["redirect_chain"] = json.loads(d["redirect_chain"]) if d["redirect_chain"] else []
+    d = rows[0]
+    d["issues"] = json.loads(d["issues"]) if isinstance(d["issues"], str) else d.get("issues", [])
+    d["redirect_chain"] = json.loads(d["redirect_chain"]) if isinstance(d["redirect_chain"], str) else d.get("redirect_chain", [])
     d["indexable"] = bool(d["indexable"])
     return d
 
@@ -438,37 +415,29 @@ def get_paginated_results(scan_id: str, offset: int = 0, limit: int = 50,
 
     where_str = " AND ".join(where)
 
-    total_rows = _all(
-        f"SELECT COUNT(*) as c FROM url_results WHERE {where_str}", tuple(params)
-    )
-    total = _row_to_dict(total_rows[0])["c"] if total_rows else 0
+    total_rows = _fetch(f"SELECT COUNT(*) as c FROM url_results WHERE {where_str}", tuple(params))
+    total = total_rows[0]["c"] if total_rows else 0
 
-    rows = _all(
+    rows = _fetch(
         f"SELECT * FROM url_results WHERE {where_str} ORDER BY id LIMIT ? OFFSET ?",
         tuple(params + [limit, offset]),
     )
 
-    results = []
-    for row in rows:
-        d = _row_to_dict(row)
-        d["issues"] = json.loads(d["issues"]) if d["issues"] else []
-        d["redirect_chain"] = json.loads(d["redirect_chain"]) if d["redirect_chain"] else []
+    for d in rows:
+        d["issues"] = json.loads(d["issues"]) if isinstance(d["issues"], str) else d.get("issues", [])
+        d["redirect_chain"] = json.loads(d["redirect_chain"]) if isinstance(d["redirect_chain"], str) else d.get("redirect_chain", [])
         d["indexable"] = bool(d["indexable"])
-        results.append(d)
 
-    return results, total
+    return rows, total
 
 
 def get_recent_scans(limit: int = 10) -> list[dict]:
-    rows = _all(
+    rows = _fetch(
         "SELECT scan_id, status, sitemaps, total_urls, completed, success, redirects, "
         "client_errors, server_errors, seo_issues, content_issues, started_at, completed_at, error "
         "FROM scans ORDER BY started_at DESC LIMIT ?",
         (limit,),
     )
-    results = []
-    for row in rows:
-        d = _row_to_dict(row)
-        d["sitemaps"] = json.loads(d["sitemaps"])
-        results.append(d)
-    return results
+    for d in rows:
+        d["sitemaps"] = json.loads(d["sitemaps"]) if isinstance(d["sitemaps"], str) else d.get("sitemaps", [])
+    return rows
