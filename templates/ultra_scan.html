@@ -51,10 +51,21 @@
                         Start Ultra Scan
                     </button>
                 </form>
+
+                <div class="card" style="margin-top: 30px; padding: 20px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--card-bg);">
+                    <h3 style="margin-top: 0; margin-bottom: 10px;">Load Existing Ultra Scan</h3>
+                    <form id="load-scan-form" style="display: flex; gap: 10px; align-items: center; margin-top: 15px;">
+                        <input type="text" id="load-scan-id" placeholder="Enter Scan ID (e.g. a9cff590666e)" required style="flex: 1; margin: 0; padding: 10px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--bg-color); color: var(--text-color);">
+                        <button type="submit" class="btn btn-secondary" style="margin: 0; padding: 10px 20px; white-space: nowrap;">Load Scan</button>
+                    </form>
+                </div>
             </section>
 
             <section id="progress-section" class="hidden">
                 <h2 id="progress-phase">Initializing...</h2>
+                <div class="scan-id-bar" style="margin-bottom: 20px;">Scan ID: <code id="scan-id-display">-</code>
+                    <button class="btn-copy" onclick="navigator.clipboard.writeText(document.getElementById('scan-id-display').textContent)">Copy</button>
+                </div>
                 <div class="progress-bar-container">
                     <div class="progress-bar" id="progress-bar">
                         <span id="progress-text">0%</span>
@@ -116,6 +127,9 @@
 
             <section id="results-section" class="hidden">
                 <h2>Scan Complete (In-Memory)</h2>
+                <div class="scan-id-bar" style="margin-bottom: 20px;">Scan ID: <code id="result-scan-id">-</code>
+                    <button class="btn-copy" onclick="navigator.clipboard.writeText(document.getElementById('result-scan-id').textContent)">Copy</button>
+                </div>
 
                 <div class="summary-card">
                     <div class="summary-header">

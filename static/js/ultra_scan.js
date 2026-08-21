@@ -17,6 +17,20 @@ window.addEventListener('DOMContentLoaded', () => {
         showSection('progress');
         startPolling(activeScanId);
     }
+
+    const loadScanForm = document.getElementById('load-scan-form');
+    if (loadScanForm) {
+        loadScanForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const scanId = document.getElementById('load-scan-id').value.trim();
+            if (!scanId) return;
+
+            currentScanId = scanId;
+            localStorage.setItem('active_ultra_scan_id', scanId);
+            showSection('progress');
+            startPolling(scanId);
+        });
+    }
 });
 
 form.addEventListener('submit', async (e) => {
@@ -111,6 +125,7 @@ async function pollStatus(scanId) {
 }
 
 function updateProgress(data) {
+    document.getElementById('scan-id-display').textContent = currentScanId;
     const pct = data.percentage || 0;
     document.getElementById('progress-bar').style.width = pct + '%';
     document.getElementById('progress-text').textContent = Math.round(pct) + '%';
@@ -171,6 +186,7 @@ function esc(str) {
 
 function showResults(data) {
     localStorage.removeItem('active_ultra_scan_id');
+    document.getElementById('result-scan-id').textContent = currentScanId;
     
     document.getElementById('result-total').textContent = data.total.toLocaleString();
     document.getElementById('result-success').textContent = data.success.toLocaleString();
