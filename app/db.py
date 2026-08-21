@@ -27,13 +27,13 @@ def _get_conn():
             _local.conn.execute("PRAGMA journal_mode=WAL")
             _local.conn.execute("PRAGMA synchronous=NORMAL")
 
-        _local.conn.row_factory = _RowFactory
+        _local.conn.row_factory = _make_row_factory
         _init_schema(_local.conn)
 
     return _local.conn
 
 
-class _RowFactory:
+class _Row:
     """Lightweight row wrapper that supports dict(row) and row[key]."""
     __slots__ = ("_columns", "_values")
 
@@ -57,13 +57,9 @@ class _RowFactory:
         return self._columns
 
 
-def _make_row_factory(cursor):
-    if cursor.description:
-        cols = [d[0] for d in cursor.description]
-        def factory(cursor, row):
-            return _RowFactory(cols, row)
-        return factory
-    return None
+def _make_row_factory(cursor, row):
+    cols = [d[0] for d in cursor.description] if cursor.description else []
+    return _Row(cols, row)
 
 
 def _init_schema(conn):
@@ -136,26 +132,9 @@ def _init_schema(conn):
     conn.commit()
 
 
-def _query(sql: str, params: tuple = (), one: bool = False):
+def _all(sql: str, params: tuple = ()):
     conn = _get_conn()
-    conn.row_factory = _make_row_factory
-    cur = conn.execute(sql, params)
-    rows = cur.fetchall()
-    conn.row_factory = _RowFactory
-    return rows[0] if rows else None
-
-
-def _query_all(sql: str, params: tuple = ()):
-    return _query(sql, params) if False else _do_query_all(sql, params)
-
-
-def _do_query_all(sql: str, params: tuple = ()):
-    conn = _get_conn()
-    conn.row_factory = _make_row_factory
-    cur = conn.execute(sql, params)
-    rows = cur.fetchall()
-    conn.row_factory = _RowFactory
-    return rows
+    return conn.execute(sql, params).fetchall()
 
 
 def init_db():
@@ -165,9 +144,7 @@ def init_db():
 def cleanup_old_scans(hours: int = 24):
     conn = _get_conn()
     cutoff = (datetime.utcnow() - timedelta(hours=hours)).isoformat()
-    conn.row_factory = _make_row_factory
     old = conn.execute("SELECT scan_id FROM scans WHERE completed_at < ? OR completed_at IS NULL", (cutoff,)).fetchall()
-    conn.row_factory = _RowFactory
     for row in old:
         sid = row["scan_id"]
         conn.execute("DELETE FROM url_results WHERE scan_id = ?", (sid,))
@@ -252,7 +229,7 @@ def _rows_to_dicts(rows) -> list[dict]:
 
 
 def get_status(scan_id: str) -> Optional[dict]:
-    row = _do_query_all("SELECT * FROM scans WHERE scan_id = ?", (scan_id,))
+    row = _all("SELECT * FROM scans WHERE scan_id = ?", (scan_id,))
     if not row:
         return None
 
@@ -274,7 +251,7 @@ def get_status(scan_id: str) -> Optional[dict]:
         remaining = d["total_urls"] - d["completed"]
         d["eta"] = round(remaining / rate, 1) if rate > 0 else None
 
-    recent = _do_query_all(
+    recent = _all(
         "SELECT url, status, time, size, title, words, issues FROM recent_results WHERE scan_id = ? ORDER BY id DESC",
         (scan_id,),
     )
@@ -284,7 +261,7 @@ def get_status(scan_id: str) -> Optional[dict]:
 
 
 def get_results(scan_id: str) -> list[dict]:
-    rows = _do_query_all("SELECT * FROM url_results WHERE scan_id = ?", (scan_id,))
+    rows = _all("SELECT * FROM url_results WHERE scan_id = ?", (scan_id,))
     results = []
     for r in rows:
         d = _row_to_dict(r)
@@ -296,7 +273,7 @@ def get_results(scan_id: str) -> list[dict]:
 
 
 def get_error_summary(scan_id: str) -> list[dict]:
-    rows = _do_query_all("""
+    rows = _all("""
         SELECT
             CASE
                 WHEN error != '' THEN error
@@ -336,7 +313,7 @@ def get_seo_summary(scan_id: str) -> list[dict]:
         ("Missing canonical", "canonical = '' OR canonical IS NULL"),
         ("Noindex directive", "robots LIKE '%noindex%'"),
     ]:
-        rows = _do_query_all(
+        rows = _all(
             f"SELECT COUNT(*) as c FROM url_results WHERE scan_id = ? AND {condition}", (scan_id,)
         )
         count = _row_to_dict(rows[0])["c"] if rows else 0
@@ -355,7 +332,7 @@ def get_content_summary(scan_id: str) -> list[dict]:
         ("Possible soft 404", "issues LIKE '%soft 404%'"),
         ("Possible application error", "issues LIKE '%application error%'"),
     ]:
-        rows = _do_query_all(
+        rows = _all(
             f"SELECT COUNT(*) as c FROM url_results WHERE scan_id = ? AND {condition}", (scan_id,)
         )
         count = _row_to_dict(rows[0])["c"] if rows else 0
@@ -366,7 +343,7 @@ def get_content_summary(scan_id: str) -> list[dict]:
 
 
 def count_by_status(scan_id: str) -> dict:
-    rows = _do_query_all("""
+    rows = _all("""
         SELECT
             CASE
                 WHEN status_code IS NULL AND error != '' THEN 'error'
@@ -384,7 +361,7 @@ def count_by_status(scan_id: str) -> dict:
 
 
 def get_all_issues_grouped(scan_id: str) -> list[dict]:
-    rows = _do_query_all("SELECT issues, url FROM url_results WHERE scan_id = ?", (scan_id,))
+    rows = _all("SELECT issues, url FROM url_results WHERE scan_id = ?", (scan_id,))
 
     issue_map: dict[str, dict] = {}
     for row in rows:
@@ -406,7 +383,7 @@ def get_all_issues_grouped(scan_id: str) -> list[dict]:
 
 
 def get_url_detail(scan_id: str, url: str) -> Optional[dict]:
-    rows = _do_query_all(
+    rows = _all(
         "SELECT * FROM url_results WHERE scan_id = ? AND url = ?",
         (scan_id, url),
     )
@@ -420,7 +397,7 @@ def get_url_detail(scan_id: str, url: str) -> Optional[dict]:
 
 
 def get_url_detail_by_id(scan_id: str, result_id: int) -> Optional[dict]:
-    rows = _do_query_all(
+    rows = _all(
         "SELECT * FROM url_results WHERE scan_id = ? AND id = ?",
         (scan_id, result_id),
     )
@@ -461,12 +438,12 @@ def get_paginated_results(scan_id: str, offset: int = 0, limit: int = 50,
 
     where_str = " AND ".join(where)
 
-    total_rows = _do_query_all(
+    total_rows = _all(
         f"SELECT COUNT(*) as c FROM url_results WHERE {where_str}", tuple(params)
     )
     total = _row_to_dict(total_rows[0])["c"] if total_rows else 0
 
-    rows = _do_query_all(
+    rows = _all(
         f"SELECT * FROM url_results WHERE {where_str} ORDER BY id LIMIT ? OFFSET ?",
         tuple(params + [limit, offset]),
     )
@@ -483,7 +460,7 @@ def get_paginated_results(scan_id: str, offset: int = 0, limit: int = 50,
 
 
 def get_recent_scans(limit: int = 10) -> list[dict]:
-    rows = _do_query_all(
+    rows = _all(
         "SELECT scan_id, status, sitemaps, total_urls, completed, success, redirects, "
         "client_errors, server_errors, seo_issues, content_issues, started_at, completed_at, error "
         "FROM scans ORDER BY started_at DESC LIMIT ?",
