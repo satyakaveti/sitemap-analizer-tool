@@ -27,6 +27,36 @@
         const scanId = '{{ scan_id }}';
         const resultId = {{ result_id }};
 
+        function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+
+        function scoreRating(score) {
+            if (score >= 90) return 'Excellent';
+            if (score >= 75) return 'Good';
+            if (score >= 60) return 'Needs improvement';
+            if (score >= 40) return 'Poor';
+            return 'Critical';
+        }
+
+        function scoreClass(score) {
+            if (score >= 90) return 'score-excellent';
+            if (score >= 75) return 'score-good';
+            if (score >= 60) return 'score-warn';
+            if (score >= 40) return 'score-poor';
+            return 'score-critical';
+        }
+
+        function priorityBadge(issue) {
+            const p = issue.priority || 'info';
+            return `<span class="priority-badge priority-${p}">${p}</span>`;
+        }
+
+        function formatIssue(issue) {
+            if (typeof issue === 'string') return esc(issue);
+            const code = issue.code || '';
+            const msg = issue.message || code;
+            return `${priorityBadge(issue)} <code>${esc(code)}</code> ${esc(msg)}`;
+        }
+
         async function loadDetail() {
             try {
                 const resp = await fetch(`/api/scan/${scanId}/url/${resultId}`);
@@ -43,11 +73,14 @@
             const chain = r.redirect_chain || [];
             const sc = r.status_code;
             const scClass = sc >= 500 ? 'st-red' : sc >= 400 ? 'st-red' : sc >= 300 ? 'st-yellow' : sc >= 200 ? 'st-green' : 'st-gray';
+            const score = r.score || 0;
+            const sClass = scoreClass(score);
 
             let html = `
             <div class="detail-url-bar">
                 <span class="detail-url">${esc(r.url)}</span>
                 <span class="detail-status ${scClass}">${sc || r.error || 'N/A'}</span>
+                <span class="score-badge ${sClass}">${score} - ${scoreRating(score)}</span>
             </div>
 
             <div class="detail-grid">
@@ -80,7 +113,10 @@
                 <div class="detail-card">
                     <h3>Content</h3>
                     <table class="detail-table">
-                        <tr><td>Word Count</td><td><strong>${r.word_count}</strong> ${r.word_count < 100 ? '<span class="st-red">(thin)</span>' : r.word_count < 300 ? '<span class="st-yellow">(low)</span>' : '<span class="st-green">(ok)</span>'}</td></tr>
+                        <tr><td>Word Count</td><td><strong>${r.word_count}</strong> ${r.word_count < 50 ? '<span class="st-red">(very thin)</span>' : r.word_count < 100 ? '<span class="st-yellow">(thin)</span>' : r.word_count < 300 ? '<span class="st-yellow">(low)</span>' : '<span class="st-green">(ok)</span>'}</td></tr>
+                        <tr><td>Internal Links</td><td>${r.internal_link_count || 0}</td></tr>
+                        <tr><td>External Links</td><td>${r.external_link_count || 0}</td></tr>
+                        <tr><td>Images</td><td>${r.image_count || 0} ${r.image_no_alt_count ? '<span class="st-yellow">(' + r.image_no_alt_count + ' missing alt)</span>' : ''}</td></tr>
                     </table>
                 </div>
             </div>`;
@@ -97,7 +133,7 @@
             if (issues.length > 0) {
                 html += `<div class="detail-card"><h3>Issues (${issues.length})</h3><ul class="issue-list">`;
                 issues.forEach(issue => {
-                    html += `<li class="issue-item">${esc(issue)}</li>`;
+                    html += `<li class="issue-item">${formatIssue(issue)}</li>`;
                 });
                 html += `</ul></div>`;
             } else {
@@ -106,8 +142,6 @@
 
             document.getElementById('detail-content').innerHTML = html;
         }
-
-        function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
 
         loadDetail();
     </script>

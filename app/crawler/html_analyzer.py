@@ -1,23 +1,21 @@
 import logging
-import asyncio
+from urllib.parse import urlparse
 
-import httpx
 from bs4 import BeautifulSoup
 
 from app.config import (
-    CONNECT_TIMEOUT, READ_TIMEOUT, MAX_REDIRECTS,
-    USER_AGENT, MAX_HTML_PARSE_SIZE,
+    MAX_HTML_PARSE_SIZE,
     THIN_CONTENT_THRESHOLD, VERY_THIN_CONTENT_THRESHOLD,
-    LONG_TITLE_THRESHOLD, SHORT_TITLE_THRESHOLD, LONG_META_DESC_THRESHOLD,
 )
-from app.models.scan_models import URLResult
+from app.crawler.priority import make_issue
+from app.utils import get_domain, strip_www
 
 logger = logging.getLogger(__name__)
 
 SOFT_404_PHRASES = [
     "page not found", "content unavailable", "does not exist",
     "no longer available", "been removed", "broken link",
-    "404 error", "not found", "doesn't exist",
+    "404 error", "doesn't exist",
 ]
 
 APP_ERROR_PHRASES = [
@@ -27,103 +25,344 @@ APP_ERROR_PHRASES = [
 ]
 
 
-def analyze_html(html_content: bytes, url: str) -> dict:
-    result = {}
+def analyze_html(html_content: bytes, url: str, page_domain: str = "") -> dict:
+    result = {
+        "title": "", "title_length": 0,
+        "meta_description": "", "meta_description_length": 0,
+        "h1": "", "h1_count": 0,
+        "word_count": 0,
+        "canonical": "", "robots": "", "indexable": True,
+        "viewport": "", "og_tags": {},
+        "links": [], "images": [],
+        "internal_link_count": 0, "external_link_count": 0,
+        "image_count": 0, "image_no_alt_count": 0,
+        "issues": [],
+    }
     try:
         text = html_content[:MAX_HTML_PARSE_SIZE].decode("utf-8", errors="ignore")
         soup = BeautifulSoup(text, "html.parser")
 
-        title_tag = soup.find("title")
-        result["title"] = title_tag.get_text(strip=True) if title_tag else ""
-        result["title_length"] = len(result["title"])
+        result.update(_analyze_title(soup))
+        result.update(_analyze_meta_description(soup))
+        result.update(_analyze_h1(soup))
+        result.update(_analyze_canonical(soup, url))
+        result.update(_analyze_robots(soup))
+        result.update(_analyze_viewport(soup))
+        result.update(_analyze_og(soup))
+        result["word_count"] = _count_meaningful_words(soup)
 
-        meta_desc = soup.find("meta", attrs={"name": "description"})
-        result["meta_description"] = meta_desc["content"].strip() if meta_desc and meta_desc.get("content") else ""
-        result["meta_description_length"] = len(result["meta_description"])
+        links = _extract_links(soup, url, page_domain)
+        images = _extract_images(soup)
 
-        h1_tags = soup.find_all("h1")
-        result["h1"] = h1_tags[0].get_text(strip=True) if h1_tags else ""
-        result["h1_count"] = len(h1_tags)
+        result["links"] = links
+        result["internal_link_count"] = sum(1 for l in links if l.get("is_internal", True))
+        result["external_link_count"] = sum(1 for l in links if not l.get("is_internal", True))
+        result["images"] = images
+        result["image_count"] = len(images)
+        result["image_no_alt_count"] = sum(1 for img in images if not img.get("alt", "").strip())
 
-        body = soup.find("body")
-        result["word_count"] = len(body.get_text().split()) if body else 0
-
-        canonical = soup.find("link", attrs={"rel": "canonical"})
-        result["canonical"] = canonical["href"].strip() if canonical and canonical.get("href") else ""
-
-        robots_meta = soup.find("meta", attrs={"name": "robots"})
-        result["robots"] = robots_meta["content"].strip() if robots_meta and robots_meta.get("content") else ""
-
-        result["indexable"] = True
-        robots_content = result["robots"].lower()
-        if "noindex" in robots_content:
-            result["indexable"] = False
-
-        issues = _check_seo_issues(result)
-        issues += _check_content_issues(result, text)
-        result["issues"] = issues
+        result["issues"] = (
+            _check_title(result)
+            + _check_meta_description(result)
+            + _check_h1(result)
+            + _check_canonical(result, url)
+            + _check_robots(result)
+            + _check_content(result, text)
+            + _check_viewport(result)
+            + _check_og(result)
+        )
 
     except Exception as e:
-        result["issues"] = [f"Parse error: {e}"]
-        result["title"] = ""
-        result["meta_description"] = ""
-        result["h1"] = ""
-        result["canonical"] = ""
-        result["robots"] = ""
-        result["indexable"] = True
-        result["word_count"] = 0
+        logger.debug(f"HTML parse failed for {url}: {e}")
+        result["issues"] = [make_issue("APP_ERROR_PAGE", f"Parse error: {e}")]
 
     return result
 
 
-def _check_seo_issues(data: dict) -> list[str]:
+def _extract_links(soup: BeautifulSoup, page_url: str, page_domain: str) -> list[dict]:
+    links = []
+    page_domain = page_domain or get_domain(page_url)
+
+    for tag in soup.find_all("a", href=True):
+        href = tag["href"].strip()
+        if not href or href.startswith(("#", "javascript:", "mailto:", "tel:")):
+            continue
+
+        try:
+            from urllib.parse import urljoin
+            full_url = urljoin(page_url, href)
+            parsed = urlparse(full_url)
+            link_domain = strip_www(parsed.netloc.lower())
+            is_internal = link_domain == strip_www(page_domain.lower()) if page_domain else True
+
+            links.append({
+                "href": full_url,
+                "text": tag.get_text(strip=True)[:100],
+                "is_internal": is_internal,
+                "rel": tag.get("rel", []),
+            })
+        except Exception:
+            continue
+
+    return links
+
+
+def _extract_images(soup: BeautifulSoup) -> list[dict]:
+    images = []
+    for tag in soup.find_all("img"):
+        src = tag.get("src", "")
+        alt = tag.get("alt")
+        width = tag.get("width", "")
+        height = tag.get("height", "")
+        loading = tag.get("loading", "")
+
+        if src:
+            images.append({
+                "src": src[:500],
+                "alt": alt if alt is not None else "",
+                "width": str(width),
+                "height": str(height),
+                "loading": loading,
+            })
+
+    return images
+
+
+def _analyze_title(soup: BeautifulSoup) -> dict:
+    tag = soup.find("title")
+    title = tag.get_text(strip=True) if tag else ""
+    return {"title": title, "title_length": len(title)}
+
+
+def _analyze_meta_description(soup: BeautifulSoup) -> dict:
+    tag = soup.find("meta", attrs={"name": "description"})
+    desc = tag["content"].strip() if tag and tag.get("content") else ""
+    return {"meta_description": desc, "meta_description_length": len(desc)}
+
+
+def _analyze_h1(soup: BeautifulSoup) -> dict:
+    h1_tags = soup.find_all("h1")
+    h1_text = h1_tags[0].get_text(strip=True) if h1_tags else ""
+    return {"h1": h1_text, "h1_count": len(h1_tags)}
+
+
+def _analyze_canonical(soup: BeautifulSoup, url: str) -> dict:
+    canonicals = soup.find_all("link", attrs={"rel": "canonical"})
+    count = len(canonicals)
+    if count == 1:
+        href = canonicals[0].get("href", "").strip()
+        return {"canonical": href, "_raw_canonical_count": count}
+    elif count > 1:
+        href = canonicals[0].get("href", "").strip()
+        return {"canonical": href, "_raw_canonical_count": count}
+    return {"canonical": "", "_raw_canonical_count": 0}
+
+
+def _analyze_robots(soup: BeautifulSoup) -> dict:
+    tag = soup.find("meta", attrs={"name": "robots"})
+    content = tag["content"].strip() if tag and tag.get("content") else ""
+    indexable = "noindex" not in content.lower()
+    return {"robots": content, "indexable": indexable}
+
+
+def _analyze_viewport(soup: BeautifulSoup) -> dict:
+    tag = soup.find("meta", attrs={"name": "viewport"})
+    content = tag["content"].strip() if tag and tag.get("content") else ""
+    return {"viewport": content}
+
+
+def _analyze_og(soup: BeautifulSoup) -> dict:
+    og = {}
+    for prop in ["title", "description", "image", "url", "type"]:
+        tag = soup.find("meta", attrs={"property": f"og:{prop}"})
+        if tag and tag.get("content"):
+            og[prop] = tag["content"].strip()
+    return {"og_tags": og}
+
+
+def _count_meaningful_words(soup: BeautifulSoup) -> int:
+    body = soup.find("body")
+    if not body:
+        return 0
+    for tag in body.find_all(["nav", "header", "footer", "script", "style", "noscript"]):
+        tag.decompose()
+    text = body.get_text(separator=" ", strip=True)
+    return len(text.split())
+
+
+def _check_title(data: dict) -> list[dict]:
     issues = []
-    if not data.get("title"):
-        issues.append("Missing title")
-    elif data["title_length"] > LONG_TITLE_THRESHOLD:
-        issues.append(f"Title too long: {data['title_length']} chars")
-    elif data["title_length"] < SHORT_TITLE_THRESHOLD:
-        issues.append(f"Title too short: {data['title_length']} chars")
+    title = data["title"]
+    length = data["title_length"]
 
-    if not data.get("meta_description"):
-        issues.append("Missing meta description")
-    elif data["meta_description_length"] > LONG_META_DESC_THRESHOLD:
-        issues.append(f"Meta description too long: {data['meta_description_length']} chars")
-
-    if data.get("h1_count", 0) == 0:
-        issues.append("Missing H1")
-    elif data.get("h1_count", 0) > 1:
-        issues.append(f"Multiple H1 tags: {data['h1_count']}")
-
-    if not data.get("canonical"):
-        issues.append("Missing canonical tag")
-
-    if "noindex" in data.get("robots", "").lower():
-        issues.append("Page has noindex directive")
-    if "nofollow" in data.get("robots", "").lower():
-        issues.append("Page has nofollow directive")
+    if not title:
+        issues.append(make_issue("TITLE_MISSING"))
+    elif length < 20:
+        issues.append(make_issue("TITLE_SHORT", f"Title is {length} chars (recommended: 20–60)"))
+    elif length <= 60:
+        pass
+    elif length <= 70:
+        issues.append(make_issue("TITLE_LONG", f"Title is {length} chars (recommended: 20–60)"))
+    else:
+        issues.append(make_issue("TITLE_VERY_LONG", f"Title is {length} chars (recommended: 20–60)"))
 
     return issues
 
 
-def _check_content_issues(data: dict, html_text: str) -> list[str]:
+def _check_meta_description(data: dict) -> list[dict]:
+    issues = []
+    desc = data["meta_description"]
+    length = data["meta_description_length"]
+
+    if not desc:
+        issues.append(make_issue("META_DESC_MISSING"))
+    elif length < 70:
+        issues.append(make_issue("META_DESC_SHORT", f"Description is {length} chars (recommended: 70–160)"))
+    elif length <= 160:
+        pass
+    elif length <= 180:
+        issues.append(make_issue("META_DESC_LONG", f"Description is {length} chars (recommended: 70–160)"))
+    else:
+        issues.append(make_issue("META_DESC_VERY_LONG", f"Description is {length} chars (recommended: 70–160)"))
+
+    return issues
+
+
+def _check_h1(data: dict) -> list[dict]:
+    issues = []
+    count = data["h1_count"]
+    h1 = data["h1"]
+
+    if count == 0:
+        issues.append(make_issue("H1_MISSING"))
+    elif count > 1:
+        issues.append(make_issue("H1_MULTIPLE", f"Found {count} H1 tags"))
+    elif not h1:
+        issues.append(make_issue("H1_EMPTY"))
+
+    return issues
+
+
+def _check_canonical(data: dict, url: str) -> list[dict]:
+    issues = []
+    canonical = data.get("canonical", "")
+
+    if not canonical:
+        issues.append(make_issue("CANONICAL_MISSING"))
+    else:
+        try:
+            parsed = urlparse(canonical)
+            if not parsed.scheme and not parsed.netloc:
+                issues.append(make_issue("CANONICAL_INVALID", f"Invalid canonical: {canonical}"))
+            else:
+                page_domain = strip_www(urlparse(url).netloc.lower())
+                canon_domain = strip_www(parsed.netloc.lower())
+                if page_domain and canon_domain and page_domain != canon_domain:
+                    issues.append(make_issue("CANONICAL_CROSS_DOMAIN", f"Canonical points to {canon_domain}"))
+        except Exception:
+            issues.append(make_issue("CANONICAL_INVALID", f"Invalid canonical: {canonical}"))
+
+    canonicals = data.get("_raw_canonical_count", 0)
+    if canonicals and canonicals > 1:
+        issues.append(make_issue("CANONICAL_MULTIPLE", f"Found {canonicals} canonical tags"))
+
+    return issues
+
+
+def _check_robots(data: dict) -> list[dict]:
+    issues = []
+    robots = data.get("robots", "").lower()
+
+    if "noindex" in robots:
+        issues.append(make_issue("ROBOTS_NOINDEX"))
+    if "nofollow" in robots:
+        issues.append(make_issue("ROBOTS_NOFOLLOW"))
+    if robots.strip() == "none":
+        issues.append(make_issue("ROBOTS_NONE"))
+
+    return issues
+
+
+def _check_content(data: dict, html_text: str) -> list[dict]:
     issues = []
     wc = data.get("word_count", 0)
 
-    if wc < VERY_THIN_CONTENT_THRESHOLD:
-        issues.append(f"Very thin content: {wc} words")
-    elif wc < THIN_CONTENT_THRESHOLD:
-        issues.append(f"Thin content: {wc} words")
+    if wc > 0 and wc < VERY_THIN_CONTENT_THRESHOLD:
+        issues.append(make_issue("CONTENT_VERY_THIN", f"Only {wc} meaningful words"))
+    elif wc >= VERY_THIN_CONTENT_THRESHOLD and wc < THIN_CONTENT_THRESHOLD:
+        issues.append(make_issue("CONTENT_THIN", f"{wc} meaningful words"))
 
     lower_text = html_text.lower()
-    for phrase in SOFT_404_PHRASES:
-        if phrase in lower_text:
-            issues.append("Possible soft 404")
-            break
+
+    soft_404_score = _compute_soft_404_score(data, lower_text)
+    if soft_404_score >= 70:
+        issues.append(make_issue("SOFT_404_STRONG", f"Soft-404 score: {soft_404_score}"))
+    elif soft_404_score >= 50:
+        issues.append(make_issue("SOFT_404_LIKELY", f"Soft-404 score: {soft_404_score}"))
+    elif soft_404_score >= 30:
+        issues.append(make_issue("SOFT_404_POSSIBLE", f"Soft-404 score: {soft_404_score}"))
 
     for phrase in APP_ERROR_PHRASES:
         if phrase in lower_text:
-            issues.append("Possible application error")
+            issues.append(make_issue("APP_ERROR_PAGE", f"Contains '{phrase}'"))
             break
+
+    return issues
+
+
+def _compute_soft_404_score(data: dict, lower_text: str) -> int:
+    score = 0
+
+    title = data.get("title", "").lower()
+    h1 = data.get("h1", "").lower()
+
+    if "404" in title:
+        score += 30
+    elif "not found" in title:
+        score += 30
+
+    if "404" in h1:
+        score += 30
+    elif "not found" in h1:
+        score += 30
+
+    strong_404_phrases = ["page not found", "does not exist", "no longer available", "broken link"]
+    for phrase in strong_404_phrases:
+        if phrase in lower_text:
+            score += 20
+            break
+
+    wc = data.get("word_count", 0)
+    if wc < 30:
+        score += 15
+
+    robots = data.get("robots", "").lower()
+    if "noindex" in robots and score > 0:
+        score += 10
+
+    return min(score, 100)
+
+
+def _check_viewport(data: dict) -> list[dict]:
+    issues = []
+    vp = data.get("viewport", "")
+    if not vp:
+        issues.append(make_issue("VIEWPORT_MISSING"))
+    elif "width=device-width" not in vp:
+        issues.append(make_issue("VIEWPORT_MISSING", "Viewport missing width=device-width"))
+    return issues
+
+
+def _check_og(data: dict) -> list[dict]:
+    issues = []
+    og = data.get("og_tags", {})
+    required = ["title", "description", "image", "url", "type"]
+    present = [k for k in required if k in og]
+
+    if len(present) == 0:
+        issues.append(make_issue("OG_MISSING"))
+    elif len(present) < len(required):
+        missing = [k for k in required if k not in og]
+        issues.append(make_issue("OG_PARTIAL", f"Missing: {', '.join(missing)}"))
 
     return issues

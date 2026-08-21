@@ -4,6 +4,9 @@ import logging
 import httpx
 
 from app.config import USER_AGENT, CONNECT_TIMEOUT, READ_TIMEOUT, DEFAULT_CONCURRENCY
+from app.crawler.priority import has_critical, has_high
+from app.crawler.scorer import compute_score, score_rating
+from app.utils import get_domain
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +21,8 @@ class AsyncCrawler:
     async def run(self, urls: list[str]):
         self.global_semaphore = asyncio.Semaphore(DEFAULT_CONCURRENCY)
 
+        scan_domain = get_domain(urls[0]) if urls else ""
+
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(READ_TIMEOUT),
             headers={"User-Agent": USER_AGENT},
@@ -28,9 +33,13 @@ class AsyncCrawler:
             ),
         ) as client:
             from app.crawler.http_checker import HTTPChecker
+            from app.crawler.link_checker import LinkChecker
+            from app.crawler.robots import fetch_robots
             from app import db
 
             checker = HTTPChecker(client)
+            link_checker = LinkChecker(client, scan_domain)
+            robots_info = await fetch_robots(f"https://{scan_domain}")
             batch_size = 100
 
             for i in range(0, len(urls), batch_size):
@@ -44,13 +53,16 @@ class AsyncCrawler:
                     db_status = db.get_status(self.scan_id)
                     if db_status and db_status["is_cancelled"]:
                         break
-                    tasks.append(self._check_one(url, checker))
+                    tasks.append(self._check_one(url, checker, link_checker, robots_info, scan_domain))
 
                 if tasks:
                     await asyncio.gather(*tasks, return_exceptions=True)
 
-    async def _check_one(self, url: str, checker):
+    async def _check_one(self, url: str, checker, link_checker, robots_info, scan_domain):
         from app.crawler.html_analyzer import analyze_html
+        from app.crawler.url_analyzer import analyze_url
+        from app.crawler.structured_data import analyze_structured_data
+        from app.crawler.robots import evaluate_robots
         from app import db
 
         async with self.global_semaphore:
@@ -64,10 +76,7 @@ class AsyncCrawler:
 
             if result.raw_html and result.status_code and 200 <= result.status_code < 400:
                 try:
-                    if result.final_url and result.final_url != url:
-                        result.issues.append(f"Sitemap URL redirects to {result.final_url}")
-
-                    analysis = analyze_html(result.raw_html, url)
+                    analysis = analyze_html(result.raw_html, url, scan_domain)
                     result.title = analysis.get("title", "")
                     result.title_length = analysis.get("title_length", 0)
                     result.meta_description = analysis.get("meta_description", "")
@@ -78,9 +87,33 @@ class AsyncCrawler:
                     result.canonical = analysis.get("canonical", "")
                     result.robots = analysis.get("robots", "")
                     result.indexable = analysis.get("indexable", True)
+                    result.internal_link_count = analysis.get("internal_link_count", 0)
+                    result.external_link_count = analysis.get("external_link_count", 0)
+                    result.image_count = analysis.get("image_count", 0)
+                    result.image_no_alt_count = analysis.get("image_no_alt_count", 0)
+
                     result.issues.extend(analysis.get("issues", []))
+
+                    links = analysis.get("links", [])
+                    images = analysis.get("images", [])
+
+                    link_issues = await link_checker.check_links(links, images, url)
+                    result.issues.extend(link_issues)
+
+                    sd_issues = analyze_structured_data(result.raw_html)
+                    result.issues.extend(sd_issues)
+
                 except Exception as e:
                     logger.debug(f"HTML analysis failed for {url}: {e}")
+
+            url_issues = analyze_url(url, scan_domain)
+            result.issues.extend(url_issues)
+
+            robots_issues = evaluate_robots(url, robots_info)
+            result.issues.extend(robots_issues)
+
+            result.score = compute_score(result.issues)
+            result.score_rating = score_rating(result.score)
 
             result.raw_html = None
             self._completed += 1
@@ -106,6 +139,12 @@ class AsyncCrawler:
                 "indexable": result.indexable,
                 "error": result.error,
                 "issues": result.issues,
+                "score": result.score,
+                "internal_link_count": result.internal_link_count,
+                "external_link_count": result.external_link_count,
+                "broken_link_count": result.broken_link_count,
+                "image_count": result.image_count,
+                "image_no_alt_count": result.image_no_alt_count,
             })
 
             db.update_recent(self.scan_id, {
@@ -116,6 +155,7 @@ class AsyncCrawler:
                 "title": (result.title[:50] + "...") if len(result.title) > 50 else (result.title or "-"),
                 "words": str(result.word_count) if result.word_count else "-",
                 "issues": len(result.issues),
+                "score": result.score,
             })
 
             if result.status_code and result.status_code >= 400:
@@ -135,11 +175,11 @@ class AsyncCrawler:
             else:
                 db.increment_scan(self.scan_id, "success")
 
-            seo_k = ["title", "meta", "h1", "canonical", "noindex", "nofollow"]
-            if any(k in i.lower() for issue in result.issues for k in seo_k):
+            if has_critical(result.issues) or has_high(result.issues):
                 db.increment_scan(self.scan_id, "seo_issues")
-            content_k = ["thin", "soft", "word", "error"]
-            if any(k in i.lower() for issue in result.issues for k in content_k):
+
+            content_codes = ["CONTENT_THIN", "CONTENT_VERY_THIN", "SOFT_404", "APP_ERROR"]
+            if any(any(code in issue.get("code", "") for code in content_codes) for issue in result.issues):
                 db.increment_scan(self.scan_id, "content_issues")
 
             db.increment_scan(self.scan_id, "completed")

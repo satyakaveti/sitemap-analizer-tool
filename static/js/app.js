@@ -141,9 +141,12 @@ function updateLiveTable(results) {
 
     tbody.innerHTML = results.map(r => {
         const statusClass = getStatusClass(r.status);
+        const score = r.score || 0;
+        const scoreClass = score >= 90 ? 'score-excellent' : score >= 75 ? 'score-good' : score >= 60 ? 'score-warn' : score >= 40 ? 'score-poor' : 'score-critical';
         return `<tr>
             <td class="url-cell" title="${esc(r.url)}">${esc(r.url)}</td>
             <td class="status-cell ${statusClass}">${esc(String(r.status))}</td>
+            <td class="score-cell ${scoreClass}">${score}</td>
             <td>${esc(r.time)}</td>
             <td>${esc(r.size)}</td>
             <td class="title-cell" title="${esc(r.title)}">${esc(r.title)}</td>

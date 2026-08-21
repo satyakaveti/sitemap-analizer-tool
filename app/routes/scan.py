@@ -6,7 +6,6 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from app.models.scan_models import ScanStatus
 from app.config import DEFAULT_CONCURRENCY
 from app import db
 

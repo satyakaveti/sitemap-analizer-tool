@@ -498,6 +498,47 @@ select:focus {
     font-weight: 700;
 }
 
+.score-cell {
+    font-weight: 700;
+    text-align: center;
+    border-radius: 4px;
+    padding: 0.2rem 0.4rem;
+    white-space: nowrap;
+    font-size: 0.82rem;
+}
+
+.score-excellent { color: #155724; background: #d4edda; }
+.score-good { color: #0c5460; background: #d1ecf1; }
+.score-warn { color: #856404; background: #fff3cd; }
+.score-poor { color: #856404; background: #fff3cd; }
+.score-critical { color: #721c24; background: #f8d7da; }
+
+.score-badge {
+    display: inline-block;
+    padding: 0.3rem 0.8rem;
+    border-radius: 6px;
+    font-weight: 700;
+    font-size: 0.9rem;
+    white-space: nowrap;
+}
+
+.priority-badge {
+    display: inline-block;
+    padding: 0.1rem 0.4rem;
+    border-radius: 3px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-right: 0.25rem;
+}
+
+.priority-critical { background: #721c24; color: white; }
+.priority-high { background: #e74c3c; color: white; }
+.priority-medium { background: #f39c12; color: white; }
+.priority-low { background: #6c757d; color: white; }
+.priority-info { background: #17a2b8; color: white; }
+
 .summary-group {
     margin-bottom: 1.5rem;
 }

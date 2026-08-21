@@ -33,12 +33,15 @@
             </select>
             <select id="issue-filter">
                 <option value="">All Issues</option>
-                <option value="Missing title">Missing Title</option>
-                <option value="Missing meta description">Missing Meta Desc</option>
-                <option value="Missing H1">Missing H1</option>
-                <option value="Thin content">Thin Content</option>
-                <option value="soft 404">Soft 404</option>
-                <option value="noindex">Noindex</option>
+                <option value="TITLE_MISSING">Missing Title</option>
+                <option value="META_DESC_MISSING">Missing Meta Desc</option>
+                <option value="H1_MISSING">Missing H1</option>
+                <option value="CONTENT_THIN">Thin Content</option>
+                <option value="SOFT_404">Soft 404</option>
+                <option value="ROBOTS_NOINDEX">Noindex</option>
+                <option value="CANONICAL_MISSING">Missing Canonical</option>
+                <option value="LINK_EXTERNAL_BROKEN">Broken External Link</option>
+                <option value="IMG_ALT_EMPTY">Image Missing Alt</option>
             </select>
             <span class="result-count" id="result-count"></span>
         </div>
@@ -49,6 +52,7 @@
                     <th class="col-id">#</th>
                     <th class="col-url">URL</th>
                     <th class="col-status">Status</th>
+                    <th class="col-score">Score</th>
                     <th class="col-time">Time</th>
                     <th class="col-size">Size</th>
                     <th class="col-title">Title</th>
@@ -58,7 +62,7 @@
                 </tr>
             </thead>
             <tbody id="urls-body">
-                <tr><td colspan="9" class="table-loading">Loading...</td></tr>
+                <tr><td colspan="10" class="table-loading">Loading...</td></tr>
             </tbody>
         </table>
 
@@ -107,7 +111,7 @@
             document.getElementById('result-count').textContent = `${total.toLocaleString()} URLs`;
             const tbody = document.getElementById('urls-body');
             if (!results.length) {
-                tbody.innerHTML = '<tr><td colspan="9" class="table-empty">No results found</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="10" class="table-empty">No results found</td></tr>';
                 return;
             }
             tbody.innerHTML = results.map((r, i) => {
@@ -115,10 +119,13 @@
                 const scClass = sc >= 500 ? 'st-red' : sc >= 400 ? 'st-red' : sc >= 300 ? 'st-yellow' : sc >= 200 ? 'st-green' : 'st-gray';
                 const issueCount = (r.issues || []).length;
                 const offset = (currentPage - 1) * perPage;
+                const score = r.score || 0;
+                const scoreClass = score >= 90 ? 'score-excellent' : score >= 75 ? 'score-good' : score >= 60 ? 'score-warn' : score >= 40 ? 'score-poor' : 'score-critical';
                 return `<tr>
                     <td class="cell-id">${offset + i + 1}</td>
                     <td class="cell-url" title="${esc(r.url)}">${esc(r.url)}</td>
                     <td class="cell-status ${scClass}">${sc || r.error || 'N/A'}</td>
+                    <td class="score-cell ${scoreClass}">${score}</td>
                     <td>${r.response_time ? r.response_time.toFixed(2) + 's' : '-'}</td>
                     <td>${r.content_length ? (r.content_length / 1024).toFixed(0) + 'KB' : '-'}</td>
                     <td class="cell-title" title="${esc(r.title || '')}">${esc(r.title || '-')}</td>

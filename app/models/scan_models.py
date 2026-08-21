@@ -1,15 +1,5 @@
-from datetime import datetime
-from enum import Enum
 from dataclasses import dataclass, field
 from typing import Optional
-
-
-class ScanStatus(str, Enum):
-    QUEUED = "QUEUED"
-    RUNNING = "RUNNING"
-    COMPLETED = "COMPLETED"
-    FAILED = "FAILED"
-    CANCELLED = "CANCELLED"
 
 
 @dataclass
@@ -33,5 +23,12 @@ class URLResult:
     canonical: str = ""
     robots: str = ""
     indexable: bool = True
-    issues: list[str] = field(default_factory=list)
+    issues: list[dict] = field(default_factory=list)
     raw_html: Optional[bytes] = field(default=None, repr=False)
+    score: int = 0
+    score_rating: str = ""
+    internal_link_count: int = 0
+    external_link_count: int = 0
+    broken_link_count: int = 0
+    image_count: int = 0
+    image_no_alt_count: int = 0

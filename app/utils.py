@@ -1,4 +1,3 @@
-import re
 from urllib.parse import urlparse, urldefrag, urljoin
 from app.config import ALLOWED_SCHEMES, REJECTED_SCHEMES
 
@@ -31,6 +30,12 @@ def is_valid_url(url: str) -> bool:
 
 def get_domain(url: str) -> str:
     return urlparse(url).netloc
+
+
+def strip_www(domain: str) -> str:
+    if domain.lower().startswith("www."):
+        return domain[4:]
+    return domain
 
 
 def resolve_sitemap_url(base_url: str, relative: str) -> str:

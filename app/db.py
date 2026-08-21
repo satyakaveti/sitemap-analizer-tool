@@ -28,6 +28,7 @@ def _get_conn():
             db_path = Path(__file__).resolve().parent.parent / "data" / "scans.db"
             db_path.parent.mkdir(exist_ok=True)
             _local.conn = sqlite3.connect(str(db_path), check_same_thread=False)
+            _local.conn.row_factory = sqlite3.Row
             _local.conn.execute("PRAGMA journal_mode=WAL")
             _local.conn.execute("PRAGMA synchronous=NORMAL")
 
@@ -98,7 +99,13 @@ def _init_schema(conn):
             robots TEXT DEFAULT '',
             indexable INTEGER DEFAULT 1,
             error TEXT DEFAULT '',
-            issues TEXT DEFAULT '[]'
+            issues TEXT DEFAULT '[]',
+            score INTEGER DEFAULT 0,
+            internal_link_count INTEGER DEFAULT 0,
+            external_link_count INTEGER DEFAULT 0,
+            broken_link_count INTEGER DEFAULT 0,
+            image_count INTEGER DEFAULT 0,
+            image_no_alt_count INTEGER DEFAULT 0
         )""",
         """CREATE TABLE IF NOT EXISTS recent_results (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -109,7 +116,8 @@ def _init_schema(conn):
             size TEXT,
             title TEXT,
             words TEXT,
-            issues INTEGER DEFAULT 0
+            issues INTEGER DEFAULT 0,
+            score INTEGER DEFAULT 0
         )""",
         "CREATE INDEX IF NOT EXISTS idx_results_scan ON url_results(scan_id)",
         "CREATE INDEX IF NOT EXISTS idx_recent_scan ON recent_results(scan_id)",
@@ -129,12 +137,18 @@ def init_db():
 def cleanup_old_scans(hours: int = 24):
     conn = _get_conn()
     cutoff = (datetime.utcnow() - timedelta(hours=hours)).isoformat()
-    old = conn.execute("SELECT scan_id FROM scans WHERE completed_at < ? OR completed_at IS NULL", (cutoff,)).fetchall()
+    old = conn.execute(
+        "SELECT scan_id FROM scans WHERE (completed_at < ?) OR (completed_at IS NULL AND started_at < ?)",
+        (cutoff, cutoff),
+    ).fetchall()
     for row in old:
         sid = row[0] if isinstance(row, tuple) else row["scan_id"]
         conn.execute("DELETE FROM url_results WHERE scan_id = ?", (sid,))
         conn.execute("DELETE FROM recent_results WHERE scan_id = ?", (sid,))
-    conn.execute("DELETE FROM scans WHERE completed_at < ? OR (completed_at IS NULL AND started_at < ?)", (cutoff, cutoff))
+    conn.execute(
+        "DELETE FROM scans WHERE (completed_at < ?) OR (completed_at IS NULL AND started_at < ?)",
+        (cutoff, cutoff),
+    )
     conn.commit()
 
 
@@ -168,8 +182,10 @@ def add_result(scan_id: str, r: dict):
         (scan_id, url, status_code, final_url, redirect_count, redirect_chain,
          response_time, content_type, content_length, title, title_length,
          meta_description, meta_description_length, h1, h1_count, word_count,
-         canonical, robots, indexable, error, issues)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+         canonical, robots, indexable, error, issues, score,
+         internal_link_count, external_link_count, broken_link_count,
+         image_count, image_no_alt_count)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (
             scan_id, r.get("url"), r.get("status_code"), r.get("final_url"),
             r.get("redirect_count", 0), json.dumps(r.get("redirect_chain", [])),
@@ -181,6 +197,12 @@ def add_result(scan_id: str, r: dict):
             r.get("canonical", ""), r.get("robots", ""),
             1 if r.get("indexable", True) else 0,
             r.get("error", ""), json.dumps(r.get("issues", [])),
+            r.get("score", 0),
+            r.get("internal_link_count", 0),
+            r.get("external_link_count", 0),
+            r.get("broken_link_count", 0),
+            r.get("image_count", 0),
+            r.get("image_no_alt_count", 0),
         ),
     )
     conn.commit()
@@ -189,11 +211,11 @@ def add_result(scan_id: str, r: dict):
 def update_recent(scan_id: str, entry: dict):
     conn = _get_conn()
     conn.execute(
-        "INSERT INTO recent_results (scan_id, url, status, time, size, title, words, issues) VALUES (?,?,?,?,?,?,?,?)",
+        "INSERT INTO recent_results (scan_id, url, status, time, size, title, words, issues, score) VALUES (?,?,?,?,?,?,?,?,?)",
         (scan_id, entry.get("url", ""), entry.get("status", ""),
          entry.get("time", ""), entry.get("size", ""),
          entry.get("title", ""), entry.get("words", ""),
-         entry.get("issues", 0)),
+         entry.get("issues", 0), entry.get("score", 0)),
     )
     conn.execute(
         """DELETE FROM recent_results WHERE scan_id = ? AND id NOT IN
@@ -293,16 +315,30 @@ def get_error_summary(scan_id: str) -> list[dict]:
 
 def get_seo_summary(scan_id: str) -> list[dict]:
     summaries = []
-    for label, condition in [
-        ("Missing title", "title = '' OR title IS NULL"),
-        ("Missing meta description", "meta_description = '' OR meta_description IS NULL"),
-        ("Missing H1", "h1 = '' OR h1 IS NULL"),
-        ("Multiple H1 tags", "h1_count > 1"),
-        ("Missing canonical", "canonical = '' OR canonical IS NULL"),
-        ("Noindex directive", "robots LIKE '%noindex%'"),
-    ]:
+    seo_codes = [
+        ("TITLE_MISSING", "Missing title"),
+        ("TITLE_SHORT", "Title too short"),
+        ("TITLE_LONG", "Title too long"),
+        ("TITLE_VERY_LONG", "Title very long"),
+        ("META_DESC_MISSING", "Missing meta description"),
+        ("META_DESC_SHORT", "Meta desc too short"),
+        ("META_DESC_LONG", "Meta desc too long"),
+        ("META_DESC_VERY_LONG", "Meta desc very long"),
+        ("H1_MISSING", "Missing H1"),
+        ("H1_MULTIPLE", "Multiple H1 tags"),
+        ("H1_EMPTY", "Empty H1"),
+        ("CANONICAL_MISSING", "Missing canonical"),
+        ("CANONICAL_CROSS_DOMAIN", "Canonical cross-domain"),
+        ("ROBOTS_NOINDEX", "Noindex directive"),
+        ("ROBOTS_NOFOLLOW", "Nofollow directive"),
+        ("VIEWPORT_MISSING", "Missing viewport"),
+        ("OG_MISSING", "Missing OG tags"),
+        ("OG_PARTIAL", "Partial OG tags"),
+    ]
+    for code, label in seo_codes:
         rows = _fetch(
-            f"SELECT COUNT(*) as c FROM url_results WHERE scan_id = ? AND {condition}", (scan_id,)
+            "SELECT COUNT(*) as c FROM url_results WHERE scan_id = ? AND issues LIKE ?",
+            (scan_id, f'%"{code}"%'),
         )
         count = rows[0]["c"] if rows else 0
         if count > 0:
@@ -312,14 +348,21 @@ def get_seo_summary(scan_id: str) -> list[dict]:
 
 def get_content_summary(scan_id: str) -> list[dict]:
     summaries = []
-    for label, condition in [
-        ("Very thin content (<50 words)", "word_count < 50 AND word_count > 0"),
-        ("Thin content (<100 words)", "word_count >= 50 AND word_count < 100"),
-        ("Possible soft 404", "issues LIKE '%soft 404%'"),
-        ("Possible application error", "issues LIKE '%application error%'"),
-    ]:
+    content_codes = [
+        ("CONTENT_VERY_THIN", "Very thin content (<50 words)"),
+        ("CONTENT_THIN", "Thin content (<100 words)"),
+        ("CONTENT_WRONG_TYPE", "Wrong content type"),
+        ("SOFT_404", "Possible soft 404"),
+        ("APP_ERROR_PAGE", "Possible application error"),
+    ]
+    for code, label in content_codes:
+        if code == "SOFT_404":
+            pattern = '%"SOFT_404%'
+        else:
+            pattern = f'%"{code}"%'
         rows = _fetch(
-            f"SELECT COUNT(*) as c FROM url_results WHERE scan_id = ? AND {condition}", (scan_id,)
+            "SELECT COUNT(*) as c FROM url_results WHERE scan_id = ? AND issues LIKE ?",
+            (scan_id, pattern),
         )
         count = rows[0]["c"] if rows else 0
         if count > 0:
@@ -353,14 +396,24 @@ def get_all_issues_grouped(scan_id: str) -> list[dict]:
         issues = json.loads(rd["issues"]) if isinstance(rd["issues"], str) else rd.get("issues", [])
         url = rd["url"]
         for issue in issues:
-            issue = issue.strip()
-            if not issue:
+            if isinstance(issue, dict):
+                code = issue.get("code", "UNKNOWN")
+                msg = issue.get("message", code)
+                priority = issue.get("priority", "info")
+                key = code
+            else:
+                code = str(issue)
+                msg = code
+                priority = "info"
+                key = code
+
+            if not key:
                 continue
-            if issue not in issue_map:
-                issue_map[issue] = {"issue": issue, "count": 0, "sample_urls": []}
-            issue_map[issue]["count"] += 1
-            if len(issue_map[issue]["sample_urls"]) < 5:
-                issue_map[issue]["sample_urls"].append(url)
+            if key not in issue_map:
+                issue_map[key] = {"issue": msg, "code": code, "priority": priority, "count": 0, "sample_urls": []}
+            issue_map[key]["count"] += 1
+            if len(issue_map[key]["sample_urls"]) < 5:
+                issue_map[key]["sample_urls"].append(url)
 
     return sorted(issue_map.values(), key=lambda x: x["count"], reverse=True)
 

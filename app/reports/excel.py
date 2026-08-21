@@ -20,6 +20,35 @@ THIN_BORDER = Border(
 )
 
 
+def _score_rating(score: int) -> str:
+    if score >= 90:
+        return "Excellent"
+    elif score >= 75:
+        return "Good"
+    elif score >= 60:
+        return "Needs improvement"
+    elif score >= 40:
+        return "Poor"
+    return "Critical"
+
+
+def _avg_score(results: list[dict]) -> float:
+    scores = [r.get("score", 0) for r in results]
+    return round(sum(scores) / len(scores), 1) if scores else 0
+
+
+def _fmt_issues(issues: list) -> list[str]:
+    out = []
+    for issue in issues:
+        if isinstance(issue, dict):
+            code = issue.get("code", "")
+            msg = issue.get("message", "")
+            out.append(f"[{code}] {msg}" if msg else code)
+        else:
+            out.append(str(issue))
+    return out
+
+
 def _style_header(ws, col_count):
     for col in range(1, col_count + 1):
         cell = ws.cell(row=1, column=col)
@@ -83,6 +112,7 @@ def generate_report(scan_id: str) -> str:
     _write_seo_issues(wb, results, seo_summary)
     _write_content_issues(wb, results, content_summary)
     _write_redirects(wb, results)
+    _write_links_images(wb, results)
     _write_duplicates(wb, results)
 
     wb.save(str(filepath))
@@ -114,6 +144,13 @@ def _write_summary(wb, status, results, error_summary, seo_summary, content_summ
         ("", ""),
         ("SEO Issues", status.get("seo_issues", 0) if status else 0),
         ("Content Issues", status.get("content_issues", 0) if status else 0),
+        ("", ""),
+        ("Average Score", _avg_score(results)),
+        ("Excellent (90–100)", sum(1 for r in results if r.get("score", 0) >= 90)),
+        ("Good (75–89)", sum(1 for r in results if 75 <= r.get("score", 0) < 90)),
+        ("Needs improvement (60–74)", sum(1 for r in results if 60 <= r.get("score", 0) < 75)),
+        ("Poor (40–59)", sum(1 for r in results if 40 <= r.get("score", 0) < 60)),
+        ("Critical (0–39)", sum(1 for r in results if r.get("score", 0) < 40)),
     ]
     for row in rows:
         ws.append(row)
@@ -130,10 +167,11 @@ def _write_summary(wb, status, results, error_summary, seo_summary, content_summ
 def _write_all_urls(wb, results):
     ws = wb.create_sheet("All URLs")
     headers = [
-        "URL", "Status", "Final URL", "Redirect Count", "Response Time",
+        "URL", "Status", "Score", "Final URL", "Redirect Count", "Response Time",
         "Content Type", "Content Size", "Title", "Title Length",
         "Meta Description", "Meta Desc Length", "H1", "H1 Count",
-        "Word Count", "Canonical", "Robots", "Indexable", "Issues",
+        "Word Count", "Internal Links", "External Links", "Images",
+        "Canonical", "Robots", "Indexable", "Issues",
     ]
     ws.append(headers)
     _style_header(ws, len(headers))
@@ -144,15 +182,21 @@ def _write_all_urls(wb, results):
             import json
             issues = json.loads(issues) if issues else []
         row = [
-            r.get("url"), r.get("status_code"), r.get("final_url"),
+            r.get("url"), r.get("status_code"),
+            f"{r.get('score', 0)} ({_score_rating(r.get('score', 0))})",
+            r.get("final_url"),
             r.get("redirect_count", 0), r.get("response_time", 0),
             r.get("content_type", ""), r.get("content_length", 0),
             r.get("title", ""), r.get("title_length", 0),
             r.get("meta_description", ""), r.get("meta_description_length", 0),
             r.get("h1", ""), r.get("h1_count", 0),
-            r.get("word_count", 0), r.get("canonical", ""),
+            r.get("word_count", 0),
+            r.get("internal_link_count", 0),
+            r.get("external_link_count", 0),
+            r.get("image_count", 0),
+            r.get("canonical", ""),
             r.get("robots", ""), "Yes" if r.get("indexable", True) else "No",
-            "; ".join(issues) if issues else "",
+            "; ".join(_fmt_issues(issues)) if issues else "",
         ]
         fill = _status_fill(r.get("status_code"))
         _write_row(ws, ws.max_row + 1, row, fill)
@@ -200,21 +244,40 @@ def _write_error_summary(wb, error_summary):
 
 def _write_seo_issues(wb, results, seo_summary):
     ws = wb.create_sheet("SEO Issues")
-    headers = ["URL", "Status", "Issue"]
+    headers = ["URL", "Status", "Priority", "Issue Code", "Message"]
     ws.append(headers)
     _style_header(ws, len(headers))
 
-    seo_k = ["title", "meta", "h1", "canonical", "noindex", "nofollow"]
+    seo_codes = {
+        "TITLE_MISSING", "TITLE_SHORT", "TITLE_LONG", "TITLE_VERY_LONG",
+        "META_DESC_MISSING", "META_DESC_SHORT", "META_DESC_LONG", "META_DESC_VERY_LONG",
+        "H1_MISSING", "H1_EMPTY", "H1_MULTIPLE",
+        "CANONICAL_MISSING", "CANONICAL_CROSS_DOMAIN", "CANONICAL_INVALID", "CANONICAL_MULTIPLE",
+        "ROBOTS_NOINDEX", "ROBOTS_NOFOLLOW", "ROBOTS_TXT_BLOCKED",
+        "VIEWPORT_MISSING", "OG_MISSING", "OG_PARTIAL",
+        "SD_INVALID_JSONLD", "SD_MISSING_PROPERTY", "SD_INVALID_VALUE",
+        "URL_HTTP_NOT_HTTPS",
+    }
     for r in results:
         issues = r.get("issues", [])
         if isinstance(issues, str):
             import json
             issues = json.loads(issues) if issues else []
-        seo_issues = [i for i in issues if any(k in i.lower() for k in seo_k)]
-        if seo_issues:
-            _write_row(ws, ws.max_row + 1, [
-                r.get("url"), r.get("status_code") or "N/A", "; ".join(seo_issues)
-            ], ORANGE_FILL)
+        for issue in issues:
+            if isinstance(issue, dict):
+                code = issue.get("code", "")
+                if code in seo_codes:
+                    _write_row(ws, ws.max_row + 1, [
+                        r.get("url"), r.get("status_code") or "N/A",
+                        issue.get("priority", "info"), code, issue.get("message", "")
+                    ], ORANGE_FILL)
+            else:
+                issue_str = str(issue).lower()
+                if any(k in issue_str for k in ["title", "meta", "h1", "canonical", "noindex"]):
+                    _write_row(ws, ws.max_row + 1, [
+                        r.get("url"), r.get("status_code") or "N/A",
+                        "medium", "LEGACY", str(issue)
+                    ], ORANGE_FILL)
 
     ws.append(("", ""))
     ws.append(("SEO Issue Summary", "Count"))
@@ -229,22 +292,34 @@ def _write_seo_issues(wb, results, seo_summary):
 
 def _write_content_issues(wb, results, content_summary):
     ws = wb.create_sheet("Content Issues")
-    headers = ["URL", "Status", "Word Count", "Issue"]
+    headers = ["URL", "Status", "Priority", "Issue Code", "Message"]
     ws.append(headers)
     _style_header(ws, len(headers))
 
-    content_k = ["thin", "soft", "word", "error"]
+    content_codes = {
+        "CONTENT_THIN", "CONTENT_VERY_THIN", "SOFT_404_POSSIBLE", "SOFT_404_LIKELY",
+        "SOFT_404_STRONG", "APP_ERROR_PAGE", "CONTENT_WRONG_TYPE",
+    }
     for r in results:
         issues = r.get("issues", [])
         if isinstance(issues, str):
             import json
             issues = json.loads(issues) if issues else []
-        content_issues = [i for i in issues if any(k in i.lower() for k in content_k)]
-        if content_issues:
-            _write_row(ws, ws.max_row + 1, [
-                r.get("url"), r.get("status_code") or "N/A",
-                r.get("word_count", 0), "; ".join(content_issues)
-            ], ORANGE_FILL)
+        for issue in issues:
+            if isinstance(issue, dict):
+                code = issue.get("code", "")
+                if code in content_codes:
+                    _write_row(ws, ws.max_row + 1, [
+                        r.get("url"), r.get("status_code") or "N/A",
+                        issue.get("priority", "info"), code, issue.get("message", "")
+                    ], ORANGE_FILL)
+            else:
+                issue_str = str(issue).lower()
+                if any(k in issue_str for k in ["thin", "soft", "error", "word"]):
+                    _write_row(ws, ws.max_row + 1, [
+                        r.get("url"), r.get("status_code") or "N/A",
+                        "medium", "LEGACY", str(issue)
+                    ], ORANGE_FILL)
 
     ws.append(("", ""))
     ws.append(("Content Issue Summary", "Count"))
@@ -308,6 +383,47 @@ def _write_duplicates(wb, results):
             if len(urls) > 1:
                 for url in urls:
                     _write_row(ws, ws.max_row + 1, [label, value[:100], url])
+
+    ws.auto_filter.ref = ws.dimensions
+    ws.freeze_panes = "A2"
+    _auto_width(ws)
+
+
+def _write_links_images(wb, results):
+    ws = wb.create_sheet("Links & Images")
+    headers = ["URL", "Internal Links", "External Links", "Images", "Images Missing Alt", "Issues"]
+    ws.append(headers)
+    _style_header(ws, len(headers))
+
+    for r in results:
+        il = r.get("internal_link_count", 0)
+        el = r.get("external_link_count", 0)
+        ic = r.get("image_count", 0)
+        ia = r.get("image_no_alt_count", 0)
+        issues = r.get("issues", [])
+        if isinstance(issues, str):
+            import json
+            issues = json.loads(issues) if issues else []
+        link_issues = [
+            _fmt_issues([i])[0] for i in issues
+            if isinstance(i, dict) and i.get("code", "").startswith("LINK_")
+        ]
+        if il or el or ic:
+            _write_row(ws, ws.max_row + 1, [
+                r.get("url"), il, el, ic, ia,
+                "; ".join(link_issues) if link_issues else "",
+            ])
+
+    total_il = sum(r.get("internal_link_count", 0) for r in results)
+    total_el = sum(r.get("external_link_count", 0) for r in results)
+    total_ic = sum(r.get("image_count", 0) for r in results)
+    total_ia = sum(r.get("image_no_alt_count", 0) for r in results)
+
+    ws.append(("", ""))
+    ws.append(("Total Internal Links", total_il))
+    ws.append(("Total External Links", total_el))
+    ws.append(("Total Images", total_ic))
+    ws.append(("Total Images Missing Alt", total_ia))
 
     ws.auto_filter.ref = ws.dimensions
     ws.freeze_panes = "A2"
