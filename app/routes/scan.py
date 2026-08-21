@@ -23,7 +23,7 @@ class ScanRequest(BaseModel):
 async def start_scan(req: ScanRequest):
     scan_id = uuid.uuid4().hex[:12]
     db.create_scan(scan_id, req.sitemaps)
-    task = asyncio.create_task(_run_scan(scan_id, req.sitemaps))
+    task = asyncio.create_task(_run_scan(scan_id, req.sitemaps, req.concurrency))
     task.add_done_callback(lambda t: _task_done(scan_id, t))
     return {"scan_id": scan_id, "status": "QUEUED"}
 
@@ -58,7 +58,7 @@ async def cancel_scan(scan_id: str):
     return {"status": "CANCELLED"}
 
 
-async def _run_scan(scan_id: str, sitemaps: list[str]):
+async def _run_scan(scan_id: str, sitemaps: list[str], concurrency: int = 10):
     from app.crawler.sitemap import extract_all_urls
     from app.crawler.crawler import AsyncCrawler
     from app.reports.excel import generate_report
@@ -74,13 +74,13 @@ async def _run_scan(scan_id: str, sitemaps: list[str]):
             return
         if not urls:
             db.update_scan(scan_id, status="FAILED", error="No valid URLs found in sitemaps",
-                          completed_at=datetime.utcnow().isoformat())
+                           completed_at=datetime.utcnow().isoformat())
             return
 
         db.update_scan(scan_id, total_urls=len(urls), phase="Crawling URLs")
         logger.info(f"scan={scan_id} phase=crawling urls_found={len(urls)}")
 
-        crawler = AsyncCrawler(scan_id, len(urls))
+        crawler = AsyncCrawler(scan_id, len(urls), concurrency=concurrency)
         await crawler.run(urls)
 
         status = db.get_status(scan_id)

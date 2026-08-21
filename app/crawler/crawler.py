@@ -12,14 +12,16 @@ logger = logging.getLogger(__name__)
 
 
 class AsyncCrawler:
-    def __init__(self, scan_id: str, total_urls: int):
+    def __init__(self, scan_id: str, total_urls: int, concurrency: int = DEFAULT_CONCURRENCY):
         self.scan_id = scan_id
         self.total_urls = total_urls
+        from app.config import MAX_CONCURRENCY
+        self.concurrency = min(concurrency, MAX_CONCURRENCY)
         self.global_semaphore = None
         self._completed = 0
 
     async def run(self, urls: list[str]):
-        self.global_semaphore = asyncio.Semaphore(DEFAULT_CONCURRENCY)
+        self.global_semaphore = asyncio.Semaphore(self.concurrency)
 
         scan_domain = get_domain(urls[0]) if urls else ""
 
@@ -28,10 +30,11 @@ class AsyncCrawler:
             headers={"User-Agent": USER_AGENT},
             follow_redirects=True,
             limits=httpx.Limits(
-                max_connections=DEFAULT_CONCURRENCY,
-                max_keepalive_connections=DEFAULT_CONCURRENCY,
+                max_connections=self.concurrency,
+                max_keepalive_connections=self.concurrency,
             ),
         ) as client:
+
             from app.crawler.http_checker import HTTPChecker
             from app.crawler.link_checker import LinkChecker
             from app.crawler.robots import fetch_robots
