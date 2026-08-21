@@ -165,8 +165,9 @@ def update_scan(scan_id: str, **kwargs):
     conn = _get_conn()
     sets = ", ".join(f"{k} = ?" for k in kwargs)
     vals = list(kwargs.values()) + [scan_id]
-    conn.execute(f"UPDATE scans SET {sets} WHERE scan_id = ?", vals)
+    conn.execute(f"UPDATE scans SET {sets} WHERE scan_id = ?", tuple(vals))
     conn.commit()
+
 
 
 def increment_scan(scan_id: str, field: str, amount: int = 1):
@@ -227,8 +228,9 @@ def update_recent(scan_id: str, entry: dict):
 
 def _fetch(sql: str, params: tuple = ()) -> list[dict]:
     conn = _get_conn()
-    cur = conn.execute(sql, params)
+    cur = conn.execute(sql, tuple(params))
     rows = cur.fetchall()
+
     if not rows:
         return []
     
