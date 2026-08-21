@@ -30,8 +30,8 @@ class AsyncCrawler:
             headers={"User-Agent": USER_AGENT},
             follow_redirects=True,
             limits=httpx.Limits(
-                max_connections=self.concurrency,
-                max_keepalive_connections=self.concurrency,
+                max_connections=100,
+                max_keepalive_connections=20,
             ),
         ) as client:
 

@@ -69,3 +69,22 @@ def _as_list(data) -> list[dict]:
     if isinstance(data, dict):
         return [data]
     return []
+
+
+def _validate_item(item: dict) -> list[dict]:
+    issues = []
+    if not isinstance(item, dict):
+        return issues
+
+    t = item.get("@type")
+    if not t:
+        return issues
+
+    if t in REQUIRED_PROPERTIES:
+        required = REQUIRED_PROPERTIES[t]
+        for prop in required:
+            if prop not in item or item[prop] is None or str(item[prop]).strip() == "":
+                issues.append(make_issue("SD_MISSING_PROPERTY", f"Type '{t}' is missing required property '{prop}'"))
+
+    return issues
+
