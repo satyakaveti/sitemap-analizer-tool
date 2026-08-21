@@ -5,7 +5,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 REPORTS_DIR = BASE_DIR / "reports"
 REPORTS_DIR.mkdir(exist_ok=True)
 
-REPORT_RETENTION_HOURS = 24
+REPORT_RETENTION_HOURS = 168  # 7 days
 
 DEFAULT_CONCURRENCY = 25
 MAX_CONCURRENCY = 50
