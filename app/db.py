@@ -138,55 +138,77 @@ def _init_schema(conn):
     conn.commit()
 
 
+_db_lock = threading.Lock()
+
+
+def execute_sql(sql: str, params: tuple = (), commit: bool = False):
+    global _schema_ready
+    
+    with _db_lock:
+        for attempt in range(2):
+            try:
+                conn = _get_conn()
+                cur = conn.execute(sql, params)
+                if commit:
+                    conn.commit()
+                return cur
+            except Exception as e:
+                if attempt == 0:
+                    logger.warning(f"Database execute failed: {e}. Resetting connection and retrying...")
+                    if hasattr(_local, "conn") and _local.conn is not None:
+                        try:
+                            _local.conn.close()
+                        except Exception:
+                            pass
+                        _local.conn = None
+                    _schema_ready = False
+                else:
+                    logger.error(f"Database execute failed on retry: {e}")
+                    raise e
+
+
 def init_db():
     _get_conn()
 
 
 def cleanup_old_scans(hours: int = 24):
-    conn = _get_conn()
     cutoff = (datetime.utcnow() - timedelta(hours=hours)).isoformat()
-    old = conn.execute(
+    cur = execute_sql(
         "SELECT scan_id FROM scans WHERE (completed_at < ?) OR (completed_at IS NULL AND started_at < ?)",
         (cutoff, cutoff),
-    ).fetchall()
+    )
+    old = cur.fetchall()
     for row in old:
         sid = row[0] if isinstance(row, tuple) else row["scan_id"]
-        conn.execute("DELETE FROM url_results WHERE scan_id = ?", (sid,))
-        conn.execute("DELETE FROM recent_results WHERE scan_id = ?", (sid,))
-    conn.execute(
+        execute_sql("DELETE FROM url_results WHERE scan_id = ?", (sid,))
+        execute_sql("DELETE FROM recent_results WHERE scan_id = ?", (sid,))
+    execute_sql(
         "DELETE FROM scans WHERE (completed_at < ?) OR (completed_at IS NULL AND started_at < ?)",
         (cutoff, cutoff),
+        commit=True
     )
-    conn.commit()
 
 
 def create_scan(scan_id: str, sitemaps: list[str], scan_type: str = "FULL"):
-    conn = _get_conn()
-    conn.execute(
+    execute_sql(
         "INSERT INTO scans (scan_id, sitemaps, started_at, scan_type) VALUES (?, ?, ?, ?)",
         (scan_id, json.dumps(sitemaps), datetime.utcnow().isoformat(), scan_type),
+        commit=True
     )
-    conn.commit()
 
 
 def update_scan(scan_id: str, **kwargs):
-    conn = _get_conn()
     sets = ", ".join(f"{k} = ?" for k in kwargs)
     vals = list(kwargs.values()) + [scan_id]
-    conn.execute(f"UPDATE scans SET {sets} WHERE scan_id = ?", tuple(vals))
-    conn.commit()
-
+    execute_sql(f"UPDATE scans SET {sets} WHERE scan_id = ?", tuple(vals), commit=True)
 
 
 def increment_scan(scan_id: str, field: str, amount: int = 1):
-    conn = _get_conn()
-    conn.execute(f"UPDATE scans SET {field} = {field} + ? WHERE scan_id = ?", (amount, scan_id))
-    conn.commit()
+    execute_sql(f"UPDATE scans SET {field} = {field} + ? WHERE scan_id = ?", (amount, scan_id), commit=True)
 
 
 def add_result(scan_id: str, r: dict):
-    conn = _get_conn()
-    conn.execute(
+    execute_sql(
         """INSERT INTO url_results
         (scan_id, url, status_code, final_url, redirect_count, redirect_chain,
          response_time, content_type, content_length, title, title_length,
@@ -213,30 +235,28 @@ def add_result(scan_id: str, r: dict):
             r.get("image_count", 0),
             r.get("image_no_alt_count", 0),
         ),
+        commit=True
     )
-    conn.commit()
 
 
 def update_recent(scan_id: str, entry: dict):
-    conn = _get_conn()
-    conn.execute(
+    execute_sql(
         "INSERT INTO recent_results (scan_id, url, status, time, size, title, words, issues, score) VALUES (?,?,?,?,?,?,?,?,?)",
         (scan_id, entry.get("url", ""), entry.get("status", ""),
          entry.get("time", ""), entry.get("size", ""),
          entry.get("title", ""), entry.get("words", ""),
          entry.get("issues", 0), entry.get("score", 0)),
     )
-    conn.execute(
+    execute_sql(
         """DELETE FROM recent_results WHERE scan_id = ? AND id NOT IN
         (SELECT id FROM recent_results WHERE scan_id = ? ORDER BY id DESC LIMIT 5)""",
         (scan_id, scan_id),
+        commit=True
     )
-    conn.commit()
 
 
 def _fetch(sql: str, params: tuple = ()) -> list[dict]:
-    conn = _get_conn()
-    cur = conn.execute(sql, tuple(params))
+    cur = execute_sql(sql, tuple(params))
     rows = cur.fetchall()
 
     if not rows:
