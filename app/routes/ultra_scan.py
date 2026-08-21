@@ -3,11 +3,12 @@ import json
 import logging
 import uuid
 import time
+from collections import deque
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
-from fastapi.responses import StreamingResponse, FileResponse
+from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from app.config import DEFAULT_CONCURRENCY, REPORTS_DIR
@@ -25,225 +26,279 @@ class UltraScanRequest(BaseModel):
     concurrency: int = 50
 
 
+def read_last_n_lines(filepath: Path, n: int = 15) -> list[dict]:
+    try:
+        if not filepath.exists():
+            return []
+        with open(filepath, "r", encoding="utf-8") as f:
+            return [json.loads(line) for line in deque(f, n)]
+    except Exception as e:
+        logger.error(f"Error reading last {n} lines from {filepath}: {e}")
+        return []
+
+
+def read_all_jsonl(filepath: Path) -> list[dict]:
+    results = []
+    try:
+        if not filepath.exists():
+            return []
+        with open(filepath, "r", encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    results.append(json.loads(line))
+    except Exception as e:
+        logger.error(f"Error reading all lines from {filepath}: {e}")
+    return results
+
+
+async def _run_ultra_crawl(scan_id: str, urls: list[str], concurrency: int, sitemaps: list[str]):
+    status_filepath = REPORTS_DIR / f"ultra_status_{scan_id}.json"
+    results_filepath = REPORTS_DIR / f"ultra_results_{scan_id}.jsonl"
+    
+    start_time = time.monotonic()
+    total_urls = len(urls)
+    
+    status_data = {
+        "status": "RUNNING",
+        "sitemaps": sitemaps,
+        "total": total_urls,
+        "completed": 0,
+        "success": 0,
+        "redirects": 0,
+        "client_errors": 0,
+        "server_errors": 0,
+        "elapsed": 0,
+        "eta": None,
+        "phase": "Crawling URLs...",
+        "current_url": "-"
+    }
+    
+    def save_status():
+        try:
+            status_data["elapsed"] = int(time.monotonic() - start_time)
+            # Calculate simple ETA
+            comp = status_data["completed"]
+            if comp > 0 and comp < total_urls:
+                rate = comp / status_data["elapsed"] if status_data["elapsed"] > 0 else 1
+                status_data["eta"] = int((total_urls - comp) / rate)
+            else:
+                status_data["eta"] = None
+            
+            with open(status_filepath, "w", encoding="utf-8") as sf:
+                json.dump(status_data, sf)
+        except Exception as e:
+            logger.error(f"Error saving status for {scan_id}: {e}")
+
+    save_status()
+
+    crawler = AsyncCrawler(scan_id, total_urls, concurrency=concurrency, scan_type="SHORT")
+    crawler.global_semaphore = asyncio.Semaphore(crawler.concurrency)
+
+    scan_domain = ""
+    if urls:
+        from app.utils import get_domain
+        scan_domain = get_domain(urls[0])
+
+    from app.config import READ_TIMEOUT, USER_AGENT
+    import httpx
+    
+    async def process_one(url, checker, link_checker, robots_info):
+        from app.crawler.html_analyzer import analyze_html
+        from app.crawler.scorer import compute_score, score_rating
+        
+        async with crawler.global_semaphore:
+            status_data["current_url"] = url[:200]
+            save_status()
+
+            try:
+                result = await checker.check_url(url, fetch_body=True)
+                
+                if result.raw_html and result.status_code and 200 <= result.status_code < 400:
+                    try:
+                        analysis = analyze_html(result.raw_html, url, scan_domain, short_scan=True)
+                        result.title = analysis.get("title", "")
+                        result.word_count = analysis.get("word_count", 0)
+                        result.issues.extend(analysis.get("issues", []))
+                    except Exception:
+                        pass
+                
+                result.score = compute_score(result.issues)
+                result.score_rating = score_rating(result.score)
+                result.raw_html = None
+                
+                # Update stats
+                status_data["completed"] += 1
+                sc = result.status_code
+                if sc:
+                    if 200 <= sc < 300:
+                        status_data["success"] += 1
+                    elif 300 <= sc < 400:
+                        status_data["redirects"] += 1
+                    elif 400 <= sc < 500:
+                        status_data["client_errors"] += 1
+                    elif sc >= 500:
+                        status_data["server_errors"] += 1
+                else:
+                    status_data["client_errors"] += 1
+                
+                res_dict = {
+                    "url": result.url,
+                    "status_code": result.status_code,
+                    "final_url": result.final_url,
+                    "redirect_count": result.redirect_count,
+                    "response_time": result.response_time,
+                    "content_length": result.content_length,
+                    "title": result.title,
+                    "word_count": result.word_count,
+                    "error": result.error,
+                    "issues": result.issues,
+                    "score": result.score,
+                }
+                
+                # Append line to local JSONL
+                with open(results_filepath, "a", encoding="utf-8") as rf:
+                    rf.write(json.dumps(res_dict) + "\n")
+                
+                save_status()
+                
+            except Exception as ex:
+                logger.error(f"Error checking {url} in ultra scan: {ex}", exc_info=True)
+
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(READ_TIMEOUT),
+            headers={"User-Agent": USER_AGENT},
+            follow_redirects=True,
+            limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
+        ) as client:
+            from app.crawler.http_checker import HTTPChecker
+            from app.crawler.link_checker import LinkChecker
+            from app.crawler.robots import fetch_robots
+            
+            checker = HTTPChecker(client)
+            link_checker = LinkChecker(client, scan_domain)
+            robots_info = await fetch_robots(f"https://{scan_domain}")
+            
+            batch_size = 100
+            for i in range(0, len(urls), batch_size):
+                batch = urls[i:i + batch_size]
+                tasks = [process_one(u, checker, link_checker, robots_info) for u in batch]
+                await asyncio.gather(*tasks)
+
+        status_data["status"] = "COMPLETED"
+        status_data["phase"] = "Scan completed!"
+        status_data["current_url"] = "-"
+        save_status()
+
+    except Exception as err:
+        logger.error(f"Ultra crawl failed for {scan_id}: {err}", exc_info=True)
+        status_data["status"] = "FAILED"
+        status_data["phase"] = f"Failed: {err}"
+        save_status()
+
+
 @router.post("/ultra-scan")
-async def start_ultra_scan(req: UltraScanRequest):
+async def start_ultra_scan(req: UltraScanRequest, background_tasks: BackgroundTasks):
     scan_id = uuid.uuid4().hex[:12]
+    
+    # 1. Parse sitemaps
+    try:
+        urls = await extract_all_urls(scan_id, req.sitemaps)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to extract sitemaps: {e}")
 
-    async def event_generator():
-        start_time = time.monotonic()
-        
-        # 1. Parse sitemaps and find all URLs
-        yield json.dumps({"type": "status", "message": "Fetching and extracting sitemaps..."}) + "\n"
-        try:
-            urls = await extract_all_urls(scan_id, req.sitemaps)
-        except Exception as e:
-            yield json.dumps({"type": "error", "message": f"Failed to extract sitemaps: {e}"}) + "\n"
-            return
+    if not urls:
+        raise HTTPException(status_code=400, detail="No URLs found in the sitemaps.")
 
-        if not urls:
-            yield json.dumps({"type": "error", "message": "No valid URLs found in sitemaps."}) + "\n"
-            return
+    # Write initial running status
+    status_filepath = REPORTS_DIR / f"ultra_status_{scan_id}.json"
+    with open(status_filepath, "w", encoding="utf-8") as sf:
+        json.dump({
+            "status": "RUNNING",
+            "sitemaps": req.sitemaps,
+            "total": len(urls),
+            "completed": 0,
+            "success": 0,
+            "redirects": 0,
+            "client_errors": 0,
+            "server_errors": 0,
+            "elapsed": 0,
+            "eta": None,
+            "phase": "Starting scan...",
+            "current_url": "-"
+        }, sf)
 
-        total_urls = len(urls)
-        yield json.dumps({"type": "init", "total": total_urls}) + "\n"
+    # Spawn background task
+    background_tasks.add_task(_run_ultra_crawl, scan_id, urls, req.concurrency, req.sitemaps)
 
-        # 2. Run memory-only crawler
-        # Create a custom subclass of AsyncCrawler or intercept add_result/update_recent
-        crawler = AsyncCrawler(scan_id, total_urls, concurrency=req.concurrency, scan_type="SHORT")
-        
-        # In-memory list to store all crawl results
-        crawled_results = []
-        completed_count = 0
-        success_count = 0
-        redirects_count = 0
-        client_errors_count = 0
-        server_errors_count = 0
+    return {"scan_id": scan_id}
 
-        # We override crawler._check_one to stream results back to event_generator instead of database writes
-        # To do this, we intercept and hook into the crawler
-        original_check_one = crawler._check_one
 
-        async def hooked_check_one(url, checker, link_checker, robots_info, scan_domain):
-            nonlocal completed_count, success_count, redirects_count, client_errors_count, server_errors_count
-            
-            # Run the actual URL check
-            from app.crawler.html_analyzer import analyze_html
-            from app.crawler.scorer import compute_score, score_rating
-            
-            async with crawler.global_semaphore:
-                try:
-                    result = await checker.check_url(url, fetch_body=True)
-                    
-                    if result.raw_html and result.status_code and 200 <= result.status_code < 400:
-                        try:
-                            analysis = analyze_html(result.raw_html, url, scan_domain, short_scan=True)
-                            result.title = analysis.get("title", "")
-                            result.word_count = analysis.get("word_count", 0)
-                            result.issues.extend(analysis.get("issues", []))
-                        except Exception:
-                            pass
-                    
-                    result.score = compute_score(result.issues)
-                    result.score_rating = score_rating(result.score)
-                    result.raw_html = None
-                    
-                    # Update stats
-                    completed_count += 1
-                    sc = result.status_code
-                    if sc:
-                        if 200 <= sc < 300:
-                            success_count += 1
-                        elif 300 <= sc < 400:
-                            redirects_count += 1
-                        elif 400 <= sc < 500:
-                            client_errors_count += 1
-                        elif sc >= 500:
-                            server_errors_count += 1
-                    else:
-                        client_errors_count += 1 # treats network errors/timeouts as client errors in UI stats
-                    
-                    res_dict = {
-                        "url": result.url,
-                        "status_code": result.status_code,
-                        "final_url": result.final_url,
-                        "redirect_count": result.redirect_count,
-                        "response_time": result.response_time,
-                        "content_length": result.content_length,
-                        "title": result.title,
-                        "word_count": result.word_count,
-                        "error": result.error,
-                        "issues": result.issues,
-                        "score": result.score,
-                    }
-                    crawled_results.append(res_dict)
-                    
-                    # Yield single result
-                    yield json.dumps({
-                        "type": "result",
-                        "data": {
-                            "url": result.url[:120],
-                            "status": str(result.status_code) if result.status_code else result.error or "N/A",
-                            "time": f"{result.response_time:.2f}s",
-                            "size": f"{result.content_length // 1024}KB" if result.content_length else "-",
-                            "title": (result.title[:50] + "...") if len(result.title) > 50 else (result.title or "-"),
-                            "words": str(result.word_count) if result.word_count else "-",
-                            "issues": len(result.issues),
-                            "score": result.score,
-                            "completed": completed_count,
-                            "success": success_count,
-                            "redirects": redirects_count,
-                            "client_errors": client_errors_count,
-                            "server_errors": server_errors_count,
-                            "percentage": round((completed_count / total_urls * 100), 2)
-                        }
-                    }) + "\n"
-                    
-                except Exception as ex:
-                    logger.error(f"Error in ultra check: {ex}", exc_info=True)
+@router.get("/ultra-scan/{scan_id}/status")
+async def get_ultra_scan_status(scan_id: str):
+    status_filepath = REPORTS_DIR / f"ultra_status_{scan_id}.json"
+    results_filepath = REPORTS_DIR / f"ultra_results_{scan_id}.jsonl"
 
-        # Hook the check_one to capture yields
-        # We rewrite crawler.run to execute the hooked_check_one and collect tasks
-        async def run_hooked(urls_list):
-            nonlocal completed_count
-            crawler.global_semaphore = asyncio.Semaphore(crawler.concurrency)
-            scan_domain = ""
-            if urls_list:
-                from app.utils import get_domain
-                scan_domain = get_domain(urls_list[0])
-            
-            from app.config import READ_TIMEOUT, USER_AGENT
-            import httpx
-            async with httpx.AsyncClient(
-                timeout=httpx.Timeout(READ_TIMEOUT),
-                headers={"User-Agent": USER_AGENT},
-                follow_redirects=True,
-                limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
-            ) as client:
-                from app.crawler.http_checker import HTTPChecker
-                from app.crawler.link_checker import LinkChecker
-                from app.crawler.robots import fetch_robots
-                
-                checker = HTTPChecker(client)
-                link_checker = LinkChecker(client, scan_domain)
-                robots_info = await fetch_robots(f"https://{scan_domain}")
-                
-                batch_size = 100
-                for i in range(0, len(urls_list), batch_size):
-                    batch = urls_list[i:i + batch_size]
-                    tasks = []
-                    for url in batch:
-                        tasks.append(hooked_check_one(url, checker, link_checker, robots_info, scan_domain))
-                    
-                    # Since hooked_check_one is a generator, we process each as they complete
-                    if tasks:
-                        # We run tasks concurrently and read values
-                        async def run_gen(gen):
-                            async for val in gen:
-                                yield val
-                        
-                        # Merge streams
-                        async def merge_streams(*generators):
-                            queue = asyncio.Queue()
-                            loop = asyncio.get_event_loop()
-                            
-                            async def worker(g):
-                                try:
-                                    async for item in g:
-                                        await queue.put(item)
-                                except Exception as err:
-                                    logger.error(f"Worker generator error: {err}")
-                            
-                            workers = [asyncio.create_task(worker(g)) for g in generators]
-                            
-                            # Wait for all workers to finish and feed the queue
-                            async def monitor():
-                                await asyncio.gather(*workers)
-                                await queue.put(None) # Sentinel
-                            
-                            asyncio.create_task(monitor())
-                            
-                            while True:
-                                item = await queue.get()
-                                if item is None:
-                                    break
-                                yield item
-                        
-                        async for event_val in merge_streams(*tasks):
-                            yield event_val
+    if not status_filepath.exists():
+        raise HTTPException(status_code=404, detail="Ultra scan status not found.")
 
-        # Execute hooked crawl and stream chunks
-        async for chunk in run_hooked(urls):
-            yield chunk
+    try:
+        with open(status_filepath, "r", encoding="utf-8") as sf:
+            status = json.load(sf)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read status: {e}")
 
-        # 3. Generate excel report on finished crawl results
-        yield json.dumps({"type": "status", "message": "Generating Excel report..."}) + "\n"
-        elapsed_time = time.monotonic() - start_time
-        
-        try:
-            report_filepath = generate_ultra_report(scan_id, crawled_results, elapsed_time, req.sitemaps)
-            yield json.dumps({
-                "type": "complete",
-                "download_url": f"/api/ultra-scan/download/{scan_id}",
-                "total": len(crawled_results),
-                "success": success_count,
-                "redirects": redirects_count,
-                "client_errors": client_errors_count,
-                "server_errors": server_errors_count,
-                "elapsed": round(elapsed_time, 2)
-            }) + "\n"
-        except Exception as e:
-            yield json.dumps({"type": "error", "message": f"Failed to generate report: {e}"}) + "\n"
+    # Read last 15 results for live dashboard table rendering
+    raw_recent = read_last_n_lines(results_filepath, 15)
+    recent_results = []
+    for r in raw_recent:
+        sc = r.get("status_code")
+        recent_results.append({
+            "url": r.get("url", "")[:120],
+            "status": str(sc) if sc else r.get("error") or "N/A",
+            "time": f"{r.get('response_time', 0):.2f}s",
+            "size": f"{r.get('content_length', 0) // 1024}KB" if r.get('content_length') else "-",
+            "title": (r.get("title", "")[:50] + "...") if len(r.get("title", "")) > 50 else (r.get("title", "") or "-"),
+            "words": str(r.get("word_count", "-")),
+            "issues": len(r.get("issues", [])),
+            "score": r.get("score", 100)
+        })
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+    status["recent_results"] = recent_results
+    status["percentage"] = round((status["completed"] / status["total"] * 100), 2) if status["total"] > 0 else 0
+    return status
 
 
 @router.get("/ultra-scan/download/{scan_id}")
 async def download_ultra_report(scan_id: str):
-    matches = list(REPORTS_DIR.glob(f"*ultra*_{scan_id}.xlsx"))
-    if not matches:
-        raise HTTPException(status_code=404, detail="Ultra report not found")
-    return FileResponse(
-        path=str(matches[0]),
-        filename=matches[0].name,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
+    status_filepath = REPORTS_DIR / f"ultra_status_{scan_id}.json"
+    results_filepath = REPORTS_DIR / f"ultra_results_{scan_id}.jsonl"
+
+    if not status_filepath.exists() or not results_filepath.exists():
+        raise HTTPException(status_code=404, detail="Ultra report results not found")
+
+    try:
+        with open(status_filepath, "r", encoding="utf-8") as sf:
+            status = json.load(sf)
+    except Exception:
+        status = {}
+
+    results = read_all_jsonl(results_filepath)
+    if not results:
+        raise HTTPException(status_code=400, detail="No crawled URLs found to generate report.")
+
+    try:
+        # Build Excel sheet on demand in separate request
+        report_filepath = generate_ultra_report(
+            scan_id,
+            results,
+            status.get("elapsed", 0),
+            status.get("sitemaps", [])
+        )
+        return FileResponse(
+            path=report_filepath,
+            filename=Path(report_filepath).name,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate Excel report: {e}")

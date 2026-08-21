@@ -7,9 +7,17 @@ const startBtn = document.getElementById('start-btn');
 const newScanBtn = document.getElementById('new-scan-btn');
 const retryBtn = document.getElementById('retry-btn');
 
-let timerInterval = null;
-let startTime = 0;
-let recentResults = [];
+let pollInterval = null;
+let currentScanId = null;
+
+window.addEventListener('DOMContentLoaded', () => {
+    const activeScanId = localStorage.getItem('active_ultra_scan_id');
+    if (activeScanId) {
+        currentScanId = activeScanId;
+        showSection('progress');
+        startPolling(activeScanId);
+    }
+});
 
 form.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -27,8 +35,6 @@ form.addEventListener('submit', async (e) => {
 
     startBtn.disabled = true;
     startBtn.textContent = 'Starting Ultra Scan...';
-    recentResults = [];
-    document.getElementById('live-table-body').innerHTML = '<tr><td colspan="8" class="table-empty">Waiting for sitemaps extraction...</td></tr>';
 
     try {
         const resp = await fetch('/api/ultra-scan', {
@@ -36,39 +42,16 @@ form.addEventListener('submit', async (e) => {
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({sitemaps, concurrency}),
         });
+        const data = await resp.json();
 
         if (!resp.ok) {
-            const data = await resp.json();
             throw new Error(data.detail || 'Failed to start ultra scan');
         }
 
+        currentScanId = data.scan_id;
+        localStorage.setItem('active_ultra_scan_id', currentScanId);
         showSection('progress');
-        startTimer();
-
-        const reader = resp.body.getReader();
-        const decoder = new TextDecoder("utf-8");
-        let buffer = '';
-
-        while (true) {
-            const { value, done } = await reader.read();
-            if (done) break;
-
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n');
-            buffer = lines.pop(); // keep last incomplete line in buffer
-
-            for (const line of lines) {
-                if (line.trim()) {
-                    try {
-                        const msg = JSON.parse(line);
-                        handleStreamMessage(msg);
-                    } catch (err) {
-                        console.error('Failed to parse line:', line, err);
-                    }
-                }
-            }
-        }
-
+        startPolling(currentScanId);
     } catch (err) {
         showError(err.message);
     } finally {
@@ -78,12 +61,14 @@ form.addEventListener('submit', async (e) => {
 });
 
 newScanBtn.addEventListener('click', () => {
+    localStorage.removeItem('active_ultra_scan_id');
     showSection('form');
     form.reset();
     document.getElementById('concurrency').value = '50';
 });
 
 retryBtn.addEventListener('click', () => {
+    localStorage.removeItem('active_ultra_scan_id');
     showSection('form');
 });
 
@@ -97,67 +82,55 @@ function showSection(name) {
 function showError(msg) {
     document.getElementById('error-message').textContent = msg;
     showSection('error');
-    stopTimer();
+    if (pollInterval) clearInterval(pollInterval);
 }
 
-function startTimer() {
-    stopTimer();
-    startTime = Date.now();
-    timerInterval = setInterval(() => {
-        const elapsed = Math.round((Date.now() - startTime) / 1000);
-        document.getElementById('stat-elapsed').textContent = elapsed + 's';
-    }, 1000);
+function startPolling(scanId) {
+    if (pollInterval) clearInterval(pollInterval);
+    pollInterval = setInterval(() => pollStatus(scanId), 2000);
+    pollStatus(scanId);
 }
 
-function stopTimer() {
-    if (timerInterval) clearInterval(timerInterval);
-}
+async function pollStatus(scanId) {
+    try {
+        const resp = await fetch(`/api/ultra-scan/${scanId}/status`);
+        const data = await resp.json();
 
-function handleStreamMessage(msg) {
-    if (msg.type === 'status') {
-        document.getElementById('progress-phase').textContent = msg.message;
-    } else if (msg.type === 'init') {
-        document.getElementById('progress-phase').textContent = 'Crawling Sitemap URLs...';
-        document.getElementById('stat-total').textContent = msg.total.toLocaleString();
-    } else if (msg.type === 'result') {
-        const item = msg.data;
-        
-        // Update stats
-        document.getElementById('stat-completed').textContent = item.completed.toLocaleString();
-        document.getElementById('stat-success').textContent = item.success.toLocaleString();
-        document.getElementById('stat-redirects').textContent = item.redirects.toLocaleString();
-        document.getElementById('stat-client-errors').textContent = item.client_errors.toLocaleString();
-        document.getElementById('stat-server-errors').textContent = item.server_errors.toLocaleString();
-
-        const pct = item.percentage || 0;
-        document.getElementById('progress-bar').style.width = pct + '%';
-        document.getElementById('progress-text').textContent = Math.round(pct) + '%';
-
-        // Keep last 15 results for live table
-        recentResults.unshift(item);
-        if (recentResults.length > 15) {
-            recentResults.pop();
+        if (data.status === 'COMPLETED') {
+            clearInterval(pollInterval);
+            showResults(data);
+        } else if (data.status === 'FAILED') {
+            clearInterval(pollInterval);
+            showError(data.phase || 'Scan failed');
+        } else {
+            updateProgress(data);
         }
-        updateLiveTable(recentResults);
-
-    } else if (msg.type === 'complete') {
-        stopTimer();
-        
-        document.getElementById('result-total').textContent = msg.total.toLocaleString();
-        document.getElementById('result-success').textContent = msg.success.toLocaleString();
-        document.getElementById('result-redirects').textContent = msg.redirects.toLocaleString();
-        document.getElementById('result-client-errors').textContent = msg.client_errors.toLocaleString();
-        document.getElementById('result-server-errors').textContent = msg.server_errors.toLocaleString();
-        document.getElementById('result-other').textContent = '0';
-        document.getElementById('result-duration').textContent = msg.elapsed + 's';
-
-        const dlBtn = document.getElementById('download-btn');
-        dlBtn.href = msg.download_url;
-
-        showSection('results');
-    } else if (msg.type === 'error') {
-        showError(msg.message);
+    } catch (e) {
+        // Keep polling on minor network glitches
     }
+}
+
+function updateProgress(data) {
+    const pct = data.percentage || 0;
+    document.getElementById('progress-bar').style.width = pct + '%';
+    document.getElementById('progress-text').textContent = Math.round(pct) + '%';
+    document.getElementById('stat-total').textContent = data.total.toLocaleString();
+    document.getElementById('stat-completed').textContent = data.completed.toLocaleString();
+    document.getElementById('stat-success').textContent = data.success.toLocaleString();
+    document.getElementById('stat-redirects').textContent = data.redirects.toLocaleString();
+    document.getElementById('stat-client-errors').textContent = data.client_errors.toLocaleString();
+    document.getElementById('stat-server-errors').textContent = data.server_errors.toLocaleString();
+    
+    let timeText = data.elapsed + 's';
+    if (data.eta) {
+        timeText += ` (ETA: ${data.eta}s)`;
+    }
+    document.getElementById('stat-elapsed').textContent = timeText;
+
+    const h2 = document.getElementById('progress-phase');
+    h2.textContent = data.phase || 'Crawling URLs...';
+
+    updateLiveTable(data.recent_results || []);
 }
 
 function updateLiveTable(results) {
@@ -194,4 +167,21 @@ function esc(str) {
     const d = document.createElement('div');
     d.textContent = str;
     return d.innerHTML;
+}
+
+function showResults(data) {
+    localStorage.removeItem('active_ultra_scan_id');
+    
+    document.getElementById('result-total').textContent = data.total.toLocaleString();
+    document.getElementById('result-success').textContent = data.success.toLocaleString();
+    document.getElementById('result-redirects').textContent = data.redirects.toLocaleString();
+    document.getElementById('result-client-errors').textContent = data.client_errors.toLocaleString();
+    document.getElementById('result-server-errors').textContent = data.server_errors.toLocaleString();
+    document.getElementById('result-other').textContent = '0';
+    document.getElementById('result-duration').textContent = data.elapsed + 's';
+
+    const dlBtn = document.getElementById('download-btn');
+    dlBtn.href = `/api/ultra-scan/download/${currentScanId}`;
+
+    showSection('results');
 }
