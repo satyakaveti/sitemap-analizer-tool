@@ -16,6 +16,8 @@ window.addEventListener('DOMContentLoaded', () => {
         currentScanId = activeScanId;
         showSection('progress');
         startPolling(activeScanId);
+    } else {
+        loadRecentScans();
     }
 
     const loadScanForm = document.getElementById('load-scan-form');
@@ -25,13 +27,50 @@ window.addEventListener('DOMContentLoaded', () => {
             const scanId = document.getElementById('load-scan-id').value.trim();
             if (!scanId) return;
 
-            currentScanId = scanId;
-            localStorage.setItem('active_ultra_scan_id', scanId);
-            showSection('progress');
-            startPolling(scanId);
+            loadUltraScanId(scanId);
         });
     }
 });
+
+async function loadRecentScans() {
+    try {
+        const resp = await fetch('/api/ultra-scan/recent');
+        const list = await resp.json();
+        const container = document.getElementById('recent-ultra-list');
+        if (!container) return;
+        
+        if (!list || !list.length) {
+            container.innerHTML = '<div style="color: var(--text-muted); font-size: 14px;">No previous Ultra scans found.</div>';
+            return;
+        }
+        
+        container.innerHTML = list.map(item => {
+            const sitemapsStr = item.sitemaps.join(', ');
+            const statusClass = item.status === 'COMPLETED' ? 'st-green' : item.status === 'RUNNING' ? 'st-yellow' : 'st-red';
+            return `
+                <div style="display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-color); font-size: 14px;">
+                    <div style="display: flex; flex-direction: column; gap: 4px; overflow: hidden; margin-right: 10px; text-align: left;">
+                        <a href="#" onclick="loadUltraScanId('${item.scan_id}'); return false;" style="font-weight: bold; color: var(--primary-color); font-family: monospace; text-decoration: none;">${item.scan_id}</a>
+                        <span style="color: var(--text-muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: left;" title="${esc(sitemapsStr)}">${esc(sitemapsStr)}</span>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 10px; white-space: nowrap;">
+                        <span style="font-size: 12px; color: var(--text-muted);">${item.date}</span>
+                        <span class="status-badge ${statusClass}" style="padding: 2px 6px; font-size: 11px;">${item.status} (${item.completed}/${item.total})</span>
+                    </div>
+                </div>
+            `;
+        }).join('');
+    } catch (e) {
+        console.error('Failed to load recent ultra scans:', e);
+    }
+}
+
+window.loadUltraScanId = function(scanId) {
+    currentScanId = scanId;
+    localStorage.setItem('active_ultra_scan_id', scanId);
+    showSection('progress');
+    startPolling(scanId);
+};
 
 form.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -79,11 +118,13 @@ newScanBtn.addEventListener('click', () => {
     showSection('form');
     form.reset();
     document.getElementById('concurrency').value = '50';
+    loadRecentScans();
 });
 
 retryBtn.addEventListener('click', () => {
     localStorage.removeItem('active_ultra_scan_id');
     showSection('form');
+    loadRecentScans();
 });
 
 function showSection(name) {

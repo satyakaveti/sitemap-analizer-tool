@@ -302,3 +302,27 @@ async def download_ultra_report(scan_id: str):
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to generate Excel report: {e}")
+
+
+@router.get("/ultra-scan/recent")
+async def get_recent_ultra_scans():
+    files = list(REPORTS_DIR.glob("ultra_status_*.json"))
+    files.sort(key=lambda f: f.stat().st_mtime, reverse=True)
+    
+    recent = []
+    for f in files[:10]: # Limit to last 10 scans
+        try:
+            scan_id = f.name.replace("ultra_status_", "").replace(".json", "")
+            with open(f, "r", encoding="utf-8") as sf:
+                data = json.load(sf)
+            recent.append({
+                "scan_id": scan_id,
+                "sitemaps": data.get("sitemaps", []),
+                "total": data.get("total", 0),
+                "completed": data.get("completed", 0),
+                "status": data.get("status", "UNKNOWN"),
+                "date": datetime.fromtimestamp(f.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+            })
+        except Exception:
+            pass
+    return recent
