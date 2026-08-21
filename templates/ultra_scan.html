@@ -57,6 +57,12 @@
                         <input type="text" id="load-scan-id" placeholder="Enter Scan ID (e.g. a9cff590666e)" required style="flex: 1; margin: 0; padding: 10px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--bg-color); color: var(--text-color);">
                         <button type="submit" class="btn btn-secondary" style="margin: 0; padding: 10px 20px; white-space: nowrap;">Load Scan</button>
                     </form>
+                    <div id="recent-ultra-list-wrap" style="margin-top: 20px; border-top: 1px solid var(--border-color); padding-top: 15px;">
+                        <h4 style="margin: 0 0 10px 0; text-align: left;">Recent Ultra Scans</h4>
+                        <div id="recent-ultra-list" style="display: flex; flex-direction: column; gap: 8px;">
+                            <!-- populated by JS -->
+                        </div>
+                    </div>
                 </div>
             </section>
 
