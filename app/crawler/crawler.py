@@ -12,11 +12,15 @@ logger = logging.getLogger(__name__)
 
 
 class AsyncCrawler:
-    def __init__(self, scan_id: str, total_urls: int, concurrency: int = DEFAULT_CONCURRENCY):
+    def __init__(self, scan_id: str, total_urls: int, concurrency: int = DEFAULT_CONCURRENCY, scan_type: str = "FULL"):
         self.scan_id = scan_id
         self.total_urls = total_urls
-        from app.config import MAX_CONCURRENCY
-        self.concurrency = min(concurrency, MAX_CONCURRENCY)
+        self.scan_type = scan_type.upper()
+        if self.scan_type == "SHORT":
+            self.concurrency = min(concurrency or 50, 100)
+        else:
+            from app.config import MAX_CONCURRENCY
+            self.concurrency = min(concurrency, MAX_CONCURRENCY)
         self.global_semaphore = None
         self._completed = 0
 
@@ -88,7 +92,7 @@ class AsyncCrawler:
                 if result.raw_html and result.status_code and 200 <= result.status_code < 400:
                     try:
                         logger.info(f"[scan={self.scan_id}] Parsing HTML for {url}")
-                        analysis = analyze_html(result.raw_html, url, scan_domain)
+                        analysis = analyze_html(result.raw_html, url, scan_domain, short_scan=(self.scan_type == "SHORT"))
                         result.title = analysis.get("title", "")
                         result.title_length = analysis.get("title_length", 0)
                         result.meta_description = analysis.get("meta_description", "")
@@ -104,28 +108,34 @@ class AsyncCrawler:
                         result.image_count = analysis.get("image_count", 0)
                         result.image_no_alt_count = analysis.get("image_no_alt_count", 0)
 
-                        result.issues.extend(analysis.get("issues", []))
+                        if self.scan_type != "SHORT":
+                            result.issues.extend(analysis.get("issues", []))
+                            links = analysis.get("links", [])
+                            images = analysis.get("images", [])
 
-                        links = analysis.get("links", [])
-                        images = analysis.get("images", [])
+                            logger.info(f"[scan={self.scan_id}] Checking external links/images for {url}")
+                            link_issues = await link_checker.check_links(links, images, url)
+                            result.issues.extend(link_issues)
 
-                        logger.info(f"[scan={self.scan_id}] Checking external links/images for {url}")
-                        link_issues = await link_checker.check_links(links, images, url)
-                        result.issues.extend(link_issues)
-
-                        logger.info(f"[scan={self.scan_id}] Parsing structured data for {url}")
-                        sd_issues = analyze_structured_data(result.raw_html)
-                        result.issues.extend(sd_issues)
+                            logger.info(f"[scan={self.scan_id}] Parsing structured data for {url}")
+                            sd_issues = analyze_structured_data(result.raw_html)
+                            result.issues.extend(sd_issues)
+                        else:
+                            # Filter issues list for SHORT scan to only keep content threshold violations
+                            content_issue_codes = {"CONTENT_THIN", "CONTENT_VERY_THIN"}
+                            analysis_issues = [iss for iss in analysis.get("issues", []) if iss.get("code") in content_issue_codes]
+                            result.issues.extend(analysis_issues)
 
                     except Exception as e:
                         logger.error(f"[scan={self.scan_id}] HTML analysis failed for {url}: {e}", exc_info=True)
 
-                logger.info(f"[scan={self.scan_id}] Running URL and robots checks for {url}")
-                url_issues = analyze_url(url, scan_domain)
-                result.issues.extend(url_issues)
+                if self.scan_type != "SHORT":
+                    logger.info(f"[scan={self.scan_id}] Running URL and robots checks for {url}")
+                    url_issues = analyze_url(url, scan_domain)
+                    result.issues.extend(url_issues)
 
-                robots_issues = evaluate_robots(url, robots_info)
-                result.issues.extend(robots_issues)
+                    robots_issues = evaluate_robots(url, robots_info)
+                    result.issues.extend(robots_issues)
 
                 result.score = compute_score(result.issues)
                 result.score_rating = score_rating(result.score)

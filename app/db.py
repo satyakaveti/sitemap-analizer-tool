@@ -75,7 +75,8 @@ def _init_schema(conn):
             completed_at TEXT,
             error TEXT DEFAULT '',
             report_path TEXT DEFAULT '',
-            is_cancelled INTEGER DEFAULT 0
+            is_cancelled INTEGER DEFAULT 0,
+            scan_type TEXT DEFAULT 'FULL'
         )""",
         """CREATE TABLE IF NOT EXISTS url_results (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -127,6 +128,13 @@ def _init_schema(conn):
             conn.execute(stmt)
         except Exception as e:
             logger.warning(f"Schema statement failed: {e}")
+    
+    # Run Alter Table migration for existing databases
+    try:
+        conn.execute("ALTER TABLE scans ADD COLUMN scan_type TEXT DEFAULT 'FULL'")
+    except Exception:
+        pass
+
     conn.commit()
 
 
@@ -152,11 +160,11 @@ def cleanup_old_scans(hours: int = 24):
     conn.commit()
 
 
-def create_scan(scan_id: str, sitemaps: list[str]):
+def create_scan(scan_id: str, sitemaps: list[str], scan_type: str = "FULL"):
     conn = _get_conn()
     conn.execute(
-        "INSERT INTO scans (scan_id, sitemaps, started_at) VALUES (?, ?, ?)",
-        (scan_id, json.dumps(sitemaps), datetime.utcnow().isoformat()),
+        "INSERT INTO scans (scan_id, sitemaps, started_at, scan_type) VALUES (?, ?, ?, ?)",
+        (scan_id, json.dumps(sitemaps), datetime.utcnow().isoformat(), scan_type),
     )
     conn.commit()
 

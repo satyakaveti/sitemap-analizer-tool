@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sitemap Health Checker</title>
+    <title>Short Sitemap Scan</title>
     <link rel="stylesheet" href="/static/css/style.css">
 </head>
 <body>
@@ -14,8 +14,8 @@
             <a href="/search" class="nav-link">Search Scan</a>
         </nav>
         <header>
-            <h1>Sitemap & URL Health Checker</h1>
-            <p class="subtitle">Scan sitemaps for HTTP errors, SEO issues, and content problems</p>
+            <h1>Short Sitemap Scan</h1>
+            <p class="subtitle">Quick check for sitemap URL accessibility (HTTP Status) and page size</p>
         </header>
 
         <main>
@@ -36,16 +36,17 @@
                     <div class="form-row">
                         <div class="form-group">
                             <label for="concurrency">Concurrent Requests</label>
-                            <select id="concurrency" name="concurrency">
-                                <option value="2">2 (gentle)</option>
+                             <select id="concurrency" name="concurrency">
                                 <option value="5">5</option>
-                                <option value="10" selected>10 (default/max)</option>
+                                <option value="10">10 (default)</option>
+                                <option value="25">25</option>
+                                <option value="50" selected>50 (fast)</option>
                             </select>
                         </div>
                     </div>
 
                     <button type="submit" id="start-btn" class="btn btn-primary">
-                        Start Scan
+                        Start Short Scan
                     </button>
                 </form>
             </section>
@@ -162,8 +163,7 @@
                     </div>
 
                     <div class="issue-summary">
-                        <div>SEO Issues: <strong id="result-seo">0</strong></div>
-                        <div>Content Issues: <strong id="result-content">0</strong></div>
+                        <div>Content Size Issues: <strong id="result-content">0</strong></div>
                         <div>Duration: <strong id="result-duration">0s</strong></div>
                     </div>
                 </div>
@@ -172,7 +172,6 @@
 
                 <div class="nav-links">
                     <a id="urls-link" class="nav-btn" href="#" target="_blank">URL Analytics</a>
-                    <a id="issues-link" class="nav-btn" href="#" target="_blank">Common Issues</a>
                 </div>
 
                 <div class="actions">
@@ -193,6 +192,6 @@
         </main>
     </div>
 
-    <script src="/static/js/app.js"></script>
+    <script src="/static/js/short_scan.js"></script>
 </body>
 </html>

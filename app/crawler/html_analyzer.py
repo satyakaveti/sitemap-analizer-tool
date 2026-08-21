@@ -25,7 +25,7 @@ APP_ERROR_PHRASES = [
 ]
 
 
-def analyze_html(html_content: bytes, url: str, page_domain: str = "") -> dict:
+def analyze_html(html_content: bytes, url: str, page_domain: str = "", short_scan: bool = False) -> dict:
     result = {
         "title": "", "title_length": 0,
         "meta_description": "", "meta_description_length": 0,
@@ -41,6 +41,12 @@ def analyze_html(html_content: bytes, url: str, page_domain: str = "") -> dict:
     try:
         text = html_content[:MAX_HTML_PARSE_SIZE].decode("utf-8", errors="ignore")
         soup = BeautifulSoup(text, "html.parser")
+
+        if short_scan:
+            result.update(_analyze_title(soup))
+            result["word_count"] = _count_meaningful_words(soup)
+            result["issues"] = _check_content(result, text)
+            return result
 
         result.update(_analyze_title(soup))
         result.update(_analyze_meta_description(soup))

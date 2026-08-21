@@ -17,13 +17,14 @@ router = APIRouter()
 class ScanRequest(BaseModel):
     sitemaps: list[str]
     concurrency: int = DEFAULT_CONCURRENCY
+    scan_type: str = "FULL"
 
 
 @router.post("/scan")
 async def start_scan(req: ScanRequest):
     scan_id = uuid.uuid4().hex[:12]
-    db.create_scan(scan_id, req.sitemaps)
-    task = asyncio.create_task(_run_scan(scan_id, req.sitemaps, req.concurrency))
+    db.create_scan(scan_id, req.sitemaps, req.scan_type)
+    task = asyncio.create_task(_run_scan(scan_id, req.sitemaps, req.concurrency, req.scan_type))
     task.add_done_callback(lambda t: _task_done(scan_id, t))
     return {"scan_id": scan_id, "status": "QUEUED"}
 
@@ -58,7 +59,7 @@ async def cancel_scan(scan_id: str):
     return {"status": "CANCELLED"}
 
 
-async def _run_scan(scan_id: str, sitemaps: list[str], concurrency: int = 10):
+async def _run_scan(scan_id: str, sitemaps: list[str], concurrency: int = 10, scan_type: str = "FULL"):
     from app.crawler.sitemap import extract_all_urls
     from app.crawler.crawler import AsyncCrawler
     from app.reports.excel import generate_report
@@ -82,9 +83,9 @@ async def _run_scan(scan_id: str, sitemaps: list[str], concurrency: int = 10):
             return
 
         db.update_scan(scan_id, total_urls=len(urls), phase="Crawling URLs")
-        logger.info(f"scan={scan_id} starting AsyncCrawler with concurrency={concurrency}")
+        logger.info(f"scan={scan_id} starting AsyncCrawler with concurrency={concurrency} scan_type={scan_type}")
 
-        crawler = AsyncCrawler(scan_id, len(urls), concurrency=concurrency)
+        crawler = AsyncCrawler(scan_id, len(urls), concurrency=concurrency, scan_type=scan_type)
         await crawler.run(urls)
         logger.info(f"scan={scan_id} crawler run finished")
 
