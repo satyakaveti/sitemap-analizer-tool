@@ -67,21 +67,26 @@ async def _run_scan(scan_id: str, sitemaps: list[str], concurrency: int = 10):
         db.update_scan(scan_id, status="RUNNING", phase="Fetching sitemaps")
         logger.info(f"scan={scan_id} phase=fetching_sitemaps sitemaps={sitemaps}")
 
+        logger.info(f"scan={scan_id} calling extract_all_urls")
         urls = await extract_all_urls(scan_id, sitemaps)
+        logger.info(f"scan={scan_id} finished extract_all_urls, found={len(urls)}")
         status = db.get_status(scan_id)
         if status and status["is_cancelled"]:
+            logger.info(f"scan={scan_id} was cancelled during sitemap fetching")
             db.update_scan(scan_id, status="CANCELLED")
             return
         if not urls:
+            logger.info(f"scan={scan_id} failed because no URLs were extracted")
             db.update_scan(scan_id, status="FAILED", error="No valid URLs found in sitemaps",
                            completed_at=datetime.utcnow().isoformat())
             return
 
         db.update_scan(scan_id, total_urls=len(urls), phase="Crawling URLs")
-        logger.info(f"scan={scan_id} phase=crawling urls_found={len(urls)}")
+        logger.info(f"scan={scan_id} starting AsyncCrawler with concurrency={concurrency}")
 
         crawler = AsyncCrawler(scan_id, len(urls), concurrency=concurrency)
         await crawler.run(urls)
+        logger.info(f"scan={scan_id} crawler run finished")
 
         status = db.get_status(scan_id)
         if status and status["is_cancelled"]:
