@@ -34,5 +34,6 @@ USER_AGENT = "SitemapHealthChecker/1.0 (+https://your-domain.example)"
 ALLOWED_SCHEMES = {"http", "https"}
 REJECTED_SCHEMES = {"javascript", "mailto", "data", "ftp", "file"}
 
-TURSO_URL = os.environ.get("TURSO_DATABASE_URL", "")
-TURSO_TOKEN = os.environ.get("TURSO_AUTH_TOKEN", "")
+TURSO_URL = os.environ.get("TURSO_DATABASE_URL", "libsql://sitemapdb-smlcodes.aws-ap-south-1.turso.io")
+TURSO_TOKEN = os.environ.get("TURSO_AUTH_TOKEN", "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJpYXQiOjE3ODcyOTUxNjEsImlkIjoiMDFhMDIxZTMtYWQwMS03OGU4LWFhMjUtN2QzNDViMDRlNTIwIiwia2lkIjoiaHEwWWo5NVdoeUoxSFFnd196bjlUZTJCVU1VbHY1WG9QbGRYRlVKR2VjZyIsInJpZCI6ImRkOTg0ZDJmLTk0MDktNDgyYy1hZmIxLTdkNzMzZDE1NDE4MSJ9.INjvr81jxLNLZYNROB5aXN2r5jIKtWqO5PUKtAc4d3SWAVqXJBfJdQCMzyRIXKCBXSWNIopdEPhKU9mOK4AyAw")
+

@@ -227,16 +227,19 @@ def update_recent(scan_id: str, entry: dict):
 
 def _fetch(sql: str, params: tuple = ()) -> list[dict]:
     conn = _get_conn()
-    rows = conn.execute(sql, params).fetchall()
-    result = []
-    for row in rows:
-        if hasattr(row, "keys"):
-            result.append({col: row[col] for col in row.keys()})
-        elif isinstance(row, tuple):
-            result.append(row)
-        else:
-            result.append(row)
-    return result
+    cur = conn.execute(sql, params)
+    rows = cur.fetchall()
+    if not rows:
+        return []
+    
+    first = rows[0]
+    if hasattr(first, "keys"):
+        return [{col: r[col] for col in r.keys()} for r in rows]
+    elif cur.description:
+        cols = [desc[0] for desc in cur.description]
+        return [dict(zip(cols, r)) for r in rows]
+    return rows
+
 
 
 def _fetch_one(sql: str, params: tuple = ()) -> Optional[dict]:
