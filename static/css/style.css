@@ -636,7 +636,7 @@ select:focus {
     white-space: nowrap;
 }
 
-.status-cell {
+.status-badge {
     font-weight: 700;
     text-align: center;
     border-radius: 4px;
@@ -656,15 +656,7 @@ select:focus {
 }
 
 /* Score Pills */
-.score-cell {
-    font-weight: 700;
-    text-align: center;
-    border-radius: 6px;
-    padding: 0.25rem 0.5rem;
-    white-space: nowrap;
-    font-size: 0.8rem;
-    display: inline-block;
-}
+
 
 .score-excellent { color: var(--success-text); background: var(--success-bg); }
 .score-good { color: #0369a1; background: #f0f9ff; }

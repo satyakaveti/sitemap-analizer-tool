@@ -145,13 +145,13 @@ function updateLiveTable(results) {
         const scoreClass = score >= 90 ? 'score-excellent' : score >= 75 ? 'score-good' : score >= 60 ? 'score-warn' : score >= 40 ? 'score-poor' : 'score-critical';
         return `<tr>
             <td class="url-cell" title="${esc(r.url)}">${esc(r.url)}</td>
-            <td class="status-cell ${statusClass}">${esc(String(r.status))}</td>
-            <td class="score-cell ${scoreClass}">${score}</td>
-            <td>${esc(r.time)}</td>
-            <td>${esc(r.size)}</td>
+            <td style="text-align: center;"><span class="status-badge ${statusClass}">${esc(String(r.status))}</span></td>
+            <td style="text-align: center;"><span class="score-badge ${scoreClass}">${score}</span></td>
+            <td style="text-align: center;">${esc(r.time)}</td>
+            <td style="text-align: center;">${esc(r.size)}</td>
             <td class="title-cell" title="${esc(r.title)}">${esc(r.title)}</td>
-            <td>${esc(String(r.words))}</td>
-            <td class="${r.issues > 0 ? 'has-issues' : ''}">${r.issues}</td>
+            <td style="text-align: center;">${esc(String(r.words))}</td>
+            <td style="text-align: center;" class="${r.issues > 0 ? 'has-issues' : ''}">${r.issues}</td>
         </tr>`;
     }).join('');
 }
