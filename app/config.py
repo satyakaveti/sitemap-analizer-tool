@@ -33,3 +33,6 @@ USER_AGENT = "SitemapHealthChecker/1.0 (+https://your-domain.example)"
 
 ALLOWED_SCHEMES = {"http", "https"}
 REJECTED_SCHEMES = {"javascript", "mailto", "data", "ftp", "file"}
+
+TURSO_URL = os.environ.get("TURSO_DATABASE_URL", "")
+TURSO_TOKEN = os.environ.get("TURSO_AUTH_TOKEN", "")
