@@ -10,11 +10,6 @@ async def index(request: Request):
     return templates.TemplateResponse(request, "index.html")
 
 
-@router.get("/short-scan")
-async def short_scan_page(request: Request):
-    return templates.TemplateResponse(request, "short_scan.html")
-
-
 @router.get("/ultra-scan")
 async def ultra_scan_page(request: Request):
     return templates.TemplateResponse(request, "ultra_scan.html")
